@@ -5,6 +5,7 @@ pub(crate) mod default_helpers;
 pub mod default_resolver;
 pub mod fxtwitter;
 pub mod hacker_news;
+pub mod host_rewrite;
 pub mod klipy;
 pub mod media;
 pub mod tenor;
@@ -68,6 +69,7 @@ pub fn build_resolver_chain() -> Vec<Box<dyn Resolver>> {
         Box::new(wikipedia::WikipediaResolver),
         Box::new(bluesky::BlueskyResolver),
         Box::new(fxtwitter::FxTwitterResolver),
+        Box::new(host_rewrite::HostRewriteResolver),
         Box::new(default_resolver::DefaultResolver),
     ]
 }
