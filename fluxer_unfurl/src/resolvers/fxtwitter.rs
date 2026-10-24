@@ -21,6 +21,7 @@ const API_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_GALLERY_IMAGES: usize = 10;
 
 const FXTWITTER_HOSTS: &[&str] = &["fxtwitter.com", "fixupx.com", "twittpr.com", "xfixup.com"];
+const TWITTER_HOSTS: &[&str] = &["x.com", "twitter.com"];
 const DIRECT_MEDIA_EXTENSIONS: &[&str] = &["mp4", "png", "jpg", "jpeg", "gif", "gifv"];
 
 const EMOJI_REPLY: &str = "\u{1F4AC}";
@@ -34,7 +35,7 @@ pub struct FxTwitterResolver;
 
 impl Resolver for FxTwitterResolver {
     fn matches(&self, url: &Url) -> bool {
-        is_fxtwitter_host(url.host_str())
+        is_fxtwitter_host(url.host_str()) || is_twitter_host(url.host_str())
     }
 
     fn resolve<'a>(
@@ -52,6 +53,16 @@ impl Resolver for FxTwitterResolver {
 
 fn is_fxtwitter_host(host: Option<&str>) -> bool {
     fxtwitter_host_prefixes(host).is_some()
+}
+
+fn is_twitter_host(host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    TWITTER_HOSTS
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
 }
 
 fn fxtwitter_host_prefixes(host: Option<&str>) -> Option<Vec<String>> {
