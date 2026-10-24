@@ -49,11 +49,15 @@ impl Resolver for DefaultResolver {
         &'a self,
         ctx: &'a ResolveContext<'_>,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<ResolverResult>> + Send + 'a>> {
-        Box::pin(resolve_html(ctx))
+        Box::pin(resolve_html(ctx, false))
     }
 }
 
-pub(crate) async fn resolve_html(ctx: &ResolveContext<'_>) -> anyhow::Result<ResolverResult> {
+/// `trust_og_video` accepts og:video even when og:type is not `video.*`.
+pub(crate) async fn resolve_html(
+    ctx: &ResolveContext<'_>,
+    trust_og_video: bool,
+) -> anyhow::Result<ResolverResult> {
     let result = http_fetch::fetch_url_maybe_body(
         &ctx.http_client,
         ctx.url.as_str(),
@@ -153,16 +157,17 @@ pub(crate) async fn resolve_html(ctx: &ResolveContext<'_>) -> anyhow::Result<Res
         })
         .flatten()
         .filter(|url| is_allowlisted_player_url(url));
-    let open_graph_video_url = og
-        .og_type
-        .as_deref()
-        .is_some_and(|og_type| og_type.starts_with("video."))
-        .then(|| {
-            og.video_primary
-                .as_deref()
-                .and_then(|url| resolve_media_url(&final_ctx.url, url))
-        })
-        .flatten();
+    let open_graph_video_url = (trust_og_video
+        || og
+            .og_type
+            .as_deref()
+            .is_some_and(|og_type| og_type.starts_with("video.")))
+    .then(|| {
+        og.video_primary
+            .as_deref()
+            .and_then(|url| resolve_media_url(&final_ctx.url, url))
+    })
+    .flatten();
     let open_graph_video_allowlisted = open_graph_video_url
         .as_deref()
         .is_some_and(is_allowlisted_player_url);
