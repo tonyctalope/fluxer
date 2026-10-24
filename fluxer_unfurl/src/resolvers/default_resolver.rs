@@ -53,7 +53,7 @@ impl Resolver for DefaultResolver {
     }
 }
 
-async fn resolve_html(ctx: &ResolveContext<'_>) -> anyhow::Result<ResolverResult> {
+pub(crate) async fn resolve_html(ctx: &ResolveContext<'_>) -> anyhow::Result<ResolverResult> {
     let result = http_fetch::fetch_url_maybe_body(
         &ctx.http_client,
         ctx.url.as_str(),
