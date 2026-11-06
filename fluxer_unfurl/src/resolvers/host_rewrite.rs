@@ -39,6 +39,7 @@ impl Resolver for HostRewriteResolver {
                 self_hosted: ctx.self_hosted,
                 youtube_api_key: ctx.youtube_api_key.clone(),
                 klipy_api_key: ctx.klipy_api_key.clone(),
+                activity_pub_signer: ctx.activity_pub_signer.clone(),
             };
             // Fixers point og:video at a playable file but rarely declare og:type video.*.
             let mut result = default_resolver::resolve_html(&rewritten_ctx, true).await?;
