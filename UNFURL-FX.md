@@ -16,7 +16,7 @@ Personal fork of [fluxerapp/fluxer](https://github.com/fluxerapp/fluxer) carryin
 
 `.github/workflows/unfurl-fx.yaml` checks every hour which upstream commit
 `ghcr.io/fluxerapp/fluxer-unfurl:v1` was built from, applies this branch's commits on top of it,
-runs the unfurl tests and pushes an arm64 image:
+runs the unfurl tests and pushes a multi-arch image (linux/amd64 and linux/arm64):
 
 - `ghcr.io/tonyctalope/fluxer-unfurl:v1-fx`: follows upstream `v1`
 - `ghcr.io/tonyctalope/fluxer-unfurl:fx-<upstream sha12>`: a specific upstream revision
