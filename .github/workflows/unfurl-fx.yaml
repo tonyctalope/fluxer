@@ -28,8 +28,13 @@ env:
   UPSTREAM_IMAGE: fluxerapp/fluxer-unfurl
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04-arm
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      rev: ${{ steps.rev.outputs.rev }}
+      tag: ${{ steps.rev.outputs.tag }}
+      track_v1: ${{ steps.rev.outputs.track_v1 }}
+      build: ${{ steps.rev.outputs.build }}
     steps:
       - uses: docker/login-action@v3
         with:
@@ -71,11 +76,28 @@ jobs:
             echo "build=$build"
           } >> "$GITHUB_OUTPUT"
 
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
       - name: Apply patches on upstream
-        if: steps.rev.outputs.build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          REV: ${{ steps.rev.outputs.rev }}
+          REV: ${{ needs.resolve.outputs.rev }}
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/compare/${UPSTREAM_REPO%%/*}:main...$GITHUB_SHA" \
@@ -89,39 +111,67 @@ jobs:
           git log --oneline -5
 
       - name: Test
-        if: steps.rev.outputs.build == 'true'
         run: docker run --rm -v "$PWD/src:/src" -w /src rust:1-trixie cargo test --locked -p fluxer-unfurl
 
       - uses: docker/setup-buildx-action@v3
-        if: steps.rev.outputs.build == 'true'
-
-      - name: Image tags
-        if: steps.rev.outputs.build == 'true'
-        id: tags
-        env:
-          REV: ${{ steps.rev.outputs.rev }}
-          TAG: ${{ steps.rev.outputs.tag }}
-          TRACK_V1: ${{ steps.rev.outputs.track_v1 }}
-        run: |
-          {
-            echo 'list<<EOF'
-            echo "$IMAGE:$TAG"
-            echo "$IMAGE:fx-${REV:0:12}"
-            if [ "$TRACK_V1" = true ]; then echo "$IMAGE:v1-fx"; fi
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v6
-        if: steps.rev.outputs.build == 'true'
+        id: push
         with:
           context: src
           file: src/fluxer_unfurl/Dockerfile
-          platforms: linux/arm64
-          push: true
-          tags: ${{ steps.tags.outputs.list }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ steps.rev.outputs.rev }}
+            org.opencontainers.image.revision=${{ needs.resolve.outputs.rev }}
           build-args: |
             BUILD_VERSION=v1-fx
-            SOURCE_SHA=${{ steps.rev.outputs.rev }}
+            SOURCE_SHA=${{ needs.resolve.outputs.rev }}
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir digests
+          touch "digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [resolve, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Publish multi-arch tags
+        env:
+          REV: ${{ needs.resolve.outputs.rev }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          TRACK_V1: ${{ needs.resolve.outputs.track_v1 }}
+        run: |
+          set -euo pipefail
+          tags=(-t "$IMAGE:$TAG" -t "$IMAGE:fx-${REV:0:12}")
+          if [ "$TRACK_V1" = true ]; then tags+=(-t "$IMAGE:v1-fx"); fi
+          cd digests
+          sources=()
+          for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:$TAG"
