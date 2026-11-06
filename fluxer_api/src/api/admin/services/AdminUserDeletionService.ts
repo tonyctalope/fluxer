@@ -32,13 +32,14 @@ import {type IARSubmission, ReportStatus} from '@app/api/report/ReportModels';
 import type {ReportService} from '@app/api/report/ReportService';
 import {getReportSearchService} from '@app/api/SearchFactory';
 import type {StoreEntitlementService} from '@app/api/store_billing/StoreEntitlementService';
+import {distributionRefundMetadata} from '@app/api/stripe/DistributionStripeMetadata';
 import {isEnforcementDeletionReason} from '@app/api/user/ProfileVisibility';
 import {
 	type PartialUserChangePropagationDeps,
 	propagateUserUpdate,
 } from '@app/api/user/services/PartialUserChangePropagation';
 import {reschedulePendingDeletion} from '@app/api/user/services/PendingDeletionCoordinator';
-import {isHeldByDecision} from '@app/api/user/UserHelpers';
+import {isDeletionComplete, isHeldByDecision} from '@app/api/user/UserHelpers';
 import {APIErrorCodes} from '@fluxer/constants/src/ApiErrorCodes';
 import {DeletionReasons} from '@fluxer/constants/src/Core';
 import {
@@ -154,6 +155,12 @@ export class AdminUserDeletionService {
 	): Promise<{user: User; skippedNetworks: Array<SkippedNetwork>}> {
 		const {basis} = request;
 		const user = await this.deps.apiContext.services.users.findUniqueAssert(userId);
+		if (isDeletionComplete(user)) {
+			throw new ConflictError({
+				code: APIErrorCodes.CONFLICT,
+				message: 'This account has already been deleted',
+			});
+		}
 		if (
 			user.pendingDeletionAt &&
 			(!request.replace_pending_deletion_at ||
@@ -219,7 +226,7 @@ export class AdminUserDeletionService {
 				decisionId: null,
 			});
 		}
-		await this.cancelSubscription(user, actor.adminUserId);
+		await this.cancelSubscription(user, actor.adminUserId, basis.type === 'enforcement');
 		await this.deps.storeEntitlementService.revokeForBannedUser(userId);
 		const notificationSent =
 			basis.type === 'enforcement' || immediate
@@ -381,17 +388,20 @@ export class AdminUserDeletionService {
 		return collectKnownUserIps(this.deps.apiContext.services.users, user);
 	}
 
-	private async cancelSubscription(user: User, adminUserId: UserID): Promise<void> {
+	private async cancelSubscription(user: User, adminUserId: UserID, refundLatestPayment: boolean): Promise<void> {
 		const {stripe, billingRepository} = this.deps;
 		const userId = user.id;
 		if (!user.stripeSubscriptionId || !stripe) return;
 		try {
 			const sub = await billingRepository.subscriptions.findById(user.stripeSubscriptionId);
 			const latestInvoiceId = sub?.latest_invoice_id ?? null;
-			let chargeIdForRefund: string | null = null;
-			if (latestInvoiceId) {
+			let refundTarget: {charge: string} | {payment_intent: string} | null = null;
+			if (latestInvoiceId && refundLatestPayment) {
 				const payment = await billingRepository.payments.findPrimaryForInvoice(latestInvoiceId);
-				chargeIdForRefund = payment?.charge_id ?? null;
+				if (payment?.status === 'paid' && payment.charge_id) refundTarget = {charge: payment.charge_id};
+				else if (payment?.status === 'paid' && payment.payment_intent_id) {
+					refundTarget = {payment_intent: payment.payment_intent_id};
+				}
 			}
 			const canceled = await stripe.subscriptions.cancel(user.stripeSubscriptionId, {
 				invoice_now: false,
@@ -412,14 +422,15 @@ export class AdminUserDeletionService {
 				{userId: userId.toString(), subscriptionId: user.stripeSubscriptionId},
 				'Stripe subscription cancelled on ban',
 			);
-			if (chargeIdForRefund) {
+			if (refundTarget) {
 				const refund = await stripe.refunds.create({
-					charge: chargeIdForRefund,
+					...refundTarget,
 					reason: 'fraudulent',
 					metadata: {
 						admin_user_id: String(adminUserId),
 						target_user_id: String(userId),
 						reason: 'pending_deletion',
+						...(await distributionRefundMetadata(stripe, refundTarget)),
 					},
 				});
 				try {
@@ -434,7 +445,7 @@ export class AdminUserDeletionService {
 						'Mirror upsert failed after deletion-time refund; reconciler will heal',
 					);
 				}
-				Logger.info({userId: userId.toString(), chargeId: chargeIdForRefund}, 'Stripe refund issued on ban');
+				Logger.info({userId: userId.toString(), ...refundTarget}, 'Stripe refund issued on ban');
 			}
 		} catch (err) {
 			Logger.error(

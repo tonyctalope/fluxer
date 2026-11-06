@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import {getContentMessage} from '@app/api/content_i18n/ContentI18n';
+import type {CustomBadge} from '@app/api/instance/custom_badges/CustomBadgeRepository';
+import type {BuiltInBadgeImages} from '@app/api/instance/InstanceConfigRepository';
 import {Logger} from '@app/api/Logger';
 import type {VisiblePremiumBadge} from '@app/api/user/profile_badges/PremiumBadgeMasking';
 import {
@@ -9,18 +11,9 @@ import {
 	PROFILE_BADGE_ASSETS,
 } from '@app/api/user/profile_badges/ProfileBadgeAssets';
 import {getVisionaryNumberTag} from '@app/api/user/profile_badges/VisionaryNumberTags';
+import type {ProfileBadgeKind} from '@fluxer/constants/src/BadgeConstants';
 import {UserFlags, UserPremiumTypes} from '@fluxer/constants/src/UserConstants';
-import {formatSinceMonthYear} from '@fluxer/date_utils/src/SinceMonthYear';
-
-export type ProfileBadgeKind =
-	| 'staff'
-	| 'partner'
-	| 'bug_hunter'
-	| 'operator_pass'
-	| 'visionary'
-	| 'visionary_number'
-	| 'plutonium'
-	| 'premium';
+import {getDateFormatter} from '@fluxer/date_utils/src/DateFormatterCache';
 
 export interface ProfileBadgeEnvironment {
 	selfHosted: boolean;
@@ -29,11 +22,15 @@ export interface ProfileBadgeEnvironment {
 	premiumName: string;
 	premiumInfoUrl: string | null;
 	marketingUrl: string;
+	mediaUrl: string;
+	customBadges: ReadonlyArray<Pick<CustomBadge, 'id' | 'name' | 'description' | 'asset' | 'href'>>;
+	builtInImages: BuiltInBadgeImages;
 }
 
 export interface VisibleOperatorPass {
 	since: Date | null;
 	count: number | null;
+	quote: string | null;
 }
 
 export interface ProfileBadgeView {
@@ -50,6 +47,7 @@ interface ProfileBadgeContent {
 	count?: number;
 	accessibleLabel?: string;
 	details?: {title: string; lines: Array<string>};
+	quote?: string;
 	caption?: string;
 	asset?: string | null;
 	smallAsset?: string | null;
@@ -68,6 +66,10 @@ function premiumName(environment: ProfileBadgeEnvironment): string {
 	return `${environment.productName} ${environment.premiumName}`;
 }
 
+function formatSinceDate(date: Date, locale: string): string {
+	return getDateFormatter(locale, {dateStyle: 'long', timeZone: 'UTC'}).format(date);
+}
+
 function premiumLabel(view: ProfileBadgeView): string {
 	if (view.premium.premiumType === UserPremiumTypes.LIFETIME) {
 		return getContentMessage('profile_badge.premium_lifetime', view.locale, {
@@ -78,7 +80,7 @@ function premiumLabel(view: ProfileBadgeView): string {
 	if (since) {
 		return getContentMessage('profile_badge.premium_since', view.locale, {
 			premium_name: premiumName(view.environment),
-			since_month_year: formatSinceMonthYear(since, view.locale, 'UTC'),
+			since_date: formatSinceDate(since, view.locale),
 		});
 	}
 	return getContentMessage('profile_badge.premium', view.locale, {premium_name: premiumName(view.environment)});
@@ -113,7 +115,7 @@ export const PROFILE_BADGE_REGISTRY: ReadonlyArray<ProfileBadgeDefinition> = [
 		kind: 'bug_hunter',
 		asset: PROFILE_BADGE_ASSETS.bug_hunter,
 		availability: 'hosted',
-		href: marketing('help/report-bug'),
+		href: () => 'https://www.youtube.com/watch?v=ez8m4PXksQs',
 		qualify: flagBadge(UserFlags.BUG_HUNTER, (view) =>
 			getContentMessage('profile_badge.bug_hunter', view.locale, {product_name: view.environment.productName}),
 		),
@@ -125,14 +127,14 @@ export const PROFILE_BADGE_REGISTRY: ReadonlyArray<ProfileBadgeDefinition> = [
 		href: marketing('pass'),
 		qualify: (view) => {
 			if (!view.operatorPass) return null;
-			const {since, count} = view.operatorPass;
+			const {since, count, quote} = view.operatorPass;
 			const stacked = count != null && count >= 2;
-			const sinceMonthYear = since ? formatSinceMonthYear(since, view.locale, 'UTC') : null;
+			const sinceDate = since ? formatSinceDate(since, view.locale) : null;
 			const lines: Array<string> = [];
-			if (sinceMonthYear) {
+			if (sinceDate) {
 				lines.push(
 					getContentMessage('profile_badge.operator_pass_since_line', view.locale, {
-						since_month_year: sinceMonthYear,
+						since_date: sinceDate,
 					}),
 				);
 			}
@@ -140,14 +142,14 @@ export const PROFILE_BADGE_REGISTRY: ReadonlyArray<ProfileBadgeDefinition> = [
 				lines.push(getContentMessage('profile_badge.operator_pass_count', view.locale, {count}));
 			}
 			let label: string;
-			if (sinceMonthYear && stacked) {
+			if (sinceDate && stacked) {
 				label = getContentMessage('profile_badge.operator_pass_since_count', view.locale, {
-					since_month_year: sinceMonthYear,
+					since_date: sinceDate,
 					count,
 				});
-			} else if (sinceMonthYear) {
+			} else if (sinceDate) {
 				label = getContentMessage('profile_badge.operator_pass_since', view.locale, {
-					since_month_year: sinceMonthYear,
+					since_date: sinceDate,
 				});
 			} else {
 				label = getContentMessage('profile_badge.operator_pass', view.locale);
@@ -162,6 +164,7 @@ export const PROFILE_BADGE_REGISTRY: ReadonlyArray<ProfileBadgeDefinition> = [
 					? getContentMessage('profile_badge.operator_pass_accessible_count', view.locale, {count})
 					: title,
 				details: {title, lines},
+				...(quote ? {quote} : {}),
 			};
 		},
 	},
@@ -178,7 +181,7 @@ export const PROFILE_BADGE_REGISTRY: ReadonlyArray<ProfileBadgeDefinition> = [
 				label: since
 					? getContentMessage('profile_badge.visionary_since', view.locale, {
 							product_name: productName,
-							since_month_year: formatSinceMonthYear(since, view.locale, 'UTC'),
+							since_date: formatSinceDate(since, view.locale),
 						})
 					: getContentMessage('profile_badge.visionary', view.locale, {product_name: productName}),
 			};

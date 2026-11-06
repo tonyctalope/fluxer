@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {registerRequestBodySchema} from '@app/api/middleware/RequestBodyBinaryFields';
 import {requireRequestJsonBody} from '@app/api/utils/RequestJsonBody';
 import {initializeFluxerErrorMap} from '@app/api/ZodErrorMap';
 import type {ValidationErrorCode} from '@fluxer/constants/src/ValidationErrorCodes';
@@ -15,6 +16,7 @@ import {
 	type core,
 	type input,
 	type output,
+	ZodArray,
 	ZodNullable,
 	ZodObject,
 	ZodOptional,
@@ -23,6 +25,8 @@ import {
 } from 'zod';
 
 initializeFluxerErrorMap();
+
+const MAX_REPORTED_VALIDATION_ISSUES = 100;
 
 function isEmptyObject(obj: object): boolean {
 	return Object.keys(obj).length === 0;
@@ -58,7 +62,10 @@ function convertEmptyValuesToNull(obj: unknown, schema?: core.$ZodType, isRoot =
 	const metadata = schema ? schemaMetadata.get(schema) : undefined;
 	if (metadata?.preserveEmptyValues) return obj;
 	if (typeof obj === 'string' && obj === '') return null;
-	if (Array.isArray(obj)) return obj.map((item) => convertEmptyValuesToNull(item, undefined, false));
+	if (Array.isArray(obj)) {
+		const element = schema instanceof ZodArray ? schema.element : undefined;
+		return obj.map((item) => convertEmptyValuesToNull(item, element, false));
+	}
 	if (obj !== null && typeof obj === 'object') {
 		if (isEmptyObject(obj) && !isRoot) return null;
 		const shape = schema instanceof ZodObject ? schema.shape : undefined;
@@ -115,7 +122,7 @@ export function inputValidationErrorFromZodIssues(issues: Array<core.$ZodIssue>)
 	const errors: Array<ValidationError> = [];
 	const localizedErrors: Array<LocalizedValidationError> = [];
 	const seen = new Set<string>();
-	for (const issue of issues) {
+	for (const issue of issues.slice(0, MAX_REPORTED_VALIDATION_ISSUES)) {
 		const path = issue.path.length > 0 ? issue.path.map(String).join('.') : 'root';
 		const code = getValidationErrorCode(issue.message);
 		const key = `${path}|${code}`;
@@ -163,6 +170,9 @@ export const Validator = <
 ): MiddlewareHandler<E, P, V> => {
 	const options: ValidatorOptions<T, E, P, Target, V> =
 		typeof hookOrOptions === 'function' ? {post: hookOrOptions} : (hookOrOptions ?? {});
+	if (target === 'json') {
+		registerRequestBodySchema(schema);
+	}
 	return async (c, next): Promise<Response | undefined> => {
 		let value: unknown;
 		switch (target) {

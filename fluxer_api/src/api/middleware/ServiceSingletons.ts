@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {activityPubKeyId} from '@app/api/activity_pub/ActivityPub';
 import {AdminRepository} from '@app/api/admin/AdminRepository';
 import {AdminApiKeyRepository} from '@app/api/admin/repositories/AdminApiKeyRepository';
 import {AdminArchiveRepository} from '@app/api/admin/repositories/AdminArchiveRepository';
@@ -44,6 +45,7 @@ import {UserCacheService} from '@app/api/infrastructure/UserCacheService';
 import {createUsersServiceClient} from '@app/api/infrastructure/UsersServiceClient';
 import {VirusScanService} from '@app/api/infrastructure/VirusScanService';
 import {type ContactEmails, resolveContactEmails, resolveLegalAddress} from '@app/api/instance/ContactEmails';
+import {CustomBadgeCatalog} from '@app/api/instance/custom_badges/CustomBadgeCatalog';
 import {InstanceConfigRepository} from '@app/api/instance/InstanceConfigRepository';
 import {NatsConfigPublisher} from '@app/api/instance/NatsConfigPublisher';
 import {getInstanceProductName} from '@app/api/instance/ProductName';
@@ -68,7 +70,6 @@ import {ApplicationRepository} from '@app/api/oauth/repositories/ApplicationRepo
 import {OAuth2TokenRepository} from '@app/api/oauth/repositories/OAuth2TokenRepository';
 import {OperatorPassEntitlementService} from '@app/api/operator_pass/OperatorPassEntitlementService';
 import {OperatorPassRepository} from '@app/api/operator_pass/OperatorPassRepository';
-import {OperatorPassWaitlistService} from '@app/api/operator_pass/OperatorPassWaitlistService';
 import {OperatorPassWallAvatarStore} from '@app/api/operator_pass/OperatorPassWallAvatarStore';
 import {
 	type IOperatorPassWallPublisher,
@@ -176,6 +177,15 @@ export const getNatsConfigPublisher = singleton(
 
 export const getVisionarySlotRepository = singleton(() => new VisionarySlotRepository());
 export const getCacheService: () => ICacheService = singleton(() => new KVCacheProvider({client: getKVClient()}));
+export const getCustomBadgeCatalog = singleton(
+	() =>
+		new CustomBadgeCatalog({
+			instanceConfigRepository: getInstanceConfigRepository(),
+			cacheService: getCacheService(),
+			snowflakeService: getSnowflakeService(),
+			mediaEndpoint: () => Config.endpoints.media,
+		}),
+);
 export const getRateLimitService = singleton(() => new RateLimitService(getKVClient()));
 export const getEmailDnsValidationService = singleton(() => new EmailDnsValidationService());
 export const getOperatorPassEntitlementService = singleton(
@@ -349,6 +359,7 @@ const getDefaultUnfurlerService = singleton(() => {
 		manager,
 		async () => instanceConfigRepository.getEffectiveYoutubeApiKey(),
 		async () => (await instanceConfigRepository.getEffectiveGifConfig()).klipy_api_key,
+		activityPubKeyId(Config.endpoints.apiPublicDiscovery),
 	);
 });
 
@@ -380,24 +391,8 @@ export const getUserPermissionUtils = singleton(
 export const getContactChangeLogService = singleton(
 	() => new UserContactChangeLogService(getUserContactChangeLogRepository()),
 );
-export const getOperatorPassWaitlistService = singleton(
-	() =>
-		new OperatorPassWaitlistService(
-			getOperatorPassRepository(),
-			getEmailService(),
-			getEmailDnsValidationService(),
-			getAdminRepository(),
-			getKVClient(),
-			getRateLimitService(),
-		),
-);
 export const getSweegoWebhookService = singleton(
-	() =>
-		new SweegoWebhookService(
-			getUserRepository(),
-			getGatewayService(),
-			Config.instance.selfHosted ? null : getOperatorPassWaitlistService(),
-		),
+	() => new SweegoWebhookService(getUserRepository(), getGatewayService()),
 );
 export const getStreamPreviewService = singleton(
 	() => new StreamPreviewService(getStorageService(), getCacheService()),

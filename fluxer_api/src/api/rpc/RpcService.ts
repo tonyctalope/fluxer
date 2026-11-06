@@ -17,7 +17,10 @@ import {Config} from '@app/api/Config';
 import {mapChannelToResponse} from '@app/api/channel/ChannelMappers';
 import type {ChannelRepository} from '@app/api/channel/ChannelRepository';
 import {buildBroadcastMessageData} from '@app/api/channel/services/message/MessageGatewayDispatch';
-import {ensurePersonalNotesChannelExists} from '@app/api/channel/services/PersonalNotesChannelRepair';
+import {
+	ensurePersonalNotesChannelExists,
+	personalNotesEnabled,
+} from '@app/api/channel/services/PersonalNotesChannelRepair';
 import {withThreadParentFieldsMany} from '@app/api/channel/services/thread/ThreadParentSettings';
 import {
 	listThreadMembersPage,
@@ -402,6 +405,11 @@ export class RpcService {
 					data: await this.getUserBlockedIds({
 						userIds: request.user_ids.map(createUserID),
 					}),
+				};
+			case 'get_users_adult_content_allowed':
+				return {
+					type: 'get_users_adult_content_allowed',
+					data: {user_ids: await this.getUsersAdultContentAllowed(request.user_ids.map(createUserID))},
 				};
 			case 'voice_get_token': {
 				Logger.debug(
@@ -874,6 +882,7 @@ export class RpcService {
 				{
 					tokenType,
 					tokenHashPrefix,
+					ip,
 					retryAfter: rateLimitResult.retryAfter,
 					limit: rateLimitResult.limit,
 					resetTime: rateLimitResult.resetTime,
@@ -905,6 +914,7 @@ export class RpcService {
 				{
 					tokenType,
 					tokenHashPrefix,
+					ip,
 				},
 				'RPC session token validation failed',
 			);
@@ -1018,7 +1028,13 @@ export class RpcService {
 			this.queueStripePremiumStateReconciliation(user),
 		);
 		timings.timeSync('queue_payment_reconciliation', () => this.queuePaymentReconciliation(user));
-		await timings.time('ensure_personal_notes_channel', async () => this.ensurePersonalNotesChannel(user));
+		if (await personalNotesEnabled()) {
+			await timings.time('ensure_personal_notes_channel', async () => this.ensurePersonalNotesChannel(user));
+		} else {
+			userData.privateChannels = userData.privateChannels.filter(
+				(channel) => channel.type !== ChannelTypes.DM_PERSONAL_NOTES,
+			);
+		}
 		const privateChannelLimitSteps: RpcTimingSteps = {};
 		const privateChannelLimitStartedAtNs = startRpcTiming();
 		userData.privateChannels = await this.ensurePrivateChannelsWithinLimit({
@@ -1618,7 +1634,11 @@ export class RpcService {
 			const needsIncomingCallRepair = settings.incomingCallFlags === 0;
 			const needsGroupDmRepair = settings.groupDmAddPermissionFlags === 0;
 			if (needsIncomingCallRepair || needsGroupDmRepair) {
-				const isAdult = canUserAccessNsfwContent({isBot: false, dateOfBirth: user.dateOfBirth});
+				const isAdult = canUserAccessNsfwContent({
+					isBot: false,
+					dateOfBirth: user.dateOfBirth,
+					attestedAgeFloor: user.attestedAgeFloor,
+				});
 				const baseRow = settings.toRow();
 				const updatedRow = {
 					...baseRow,
@@ -1941,6 +1961,11 @@ export class RpcService {
 			result[userIds[index]!.toString()] = settledBlockedIds.value.map((blockedUserId) => blockedUserId.toString());
 		}
 		return result;
+	}
+
+	private async getUsersAdultContentAllowed(userIds: Array<UserID>): Promise<Array<string>> {
+		const users = await this.userRepository.listUsers(userIds);
+		return users.filter((user) => canUserAccessNsfwContent(user)).map((user) => user.id.toString());
 	}
 
 	private async kickTemporaryMember(params: {userId: UserID; guildIds: Array<GuildID>}): Promise<boolean> {

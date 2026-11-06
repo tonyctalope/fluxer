@@ -26,6 +26,7 @@ import {
 } from '@fluxer/schema/src/domains/admin/AccountsConfigSchemas';
 import {ADMIN_ACL_COUNT, AdminAclType} from '@fluxer/schema/src/domains/admin/AdminAclType';
 import {AdminArchiveResponseSchema} from '@fluxer/schema/src/domains/admin/AdminArchiveSchemas';
+import {CustomBadgeIdListResponse} from '@fluxer/schema/src/domains/admin/AdminBadgeSchemas';
 import {GuildAdminResponse} from '@fluxer/schema/src/domains/admin/AdminGuildSchemas';
 import {ReportNoteResponse} from '@fluxer/schema/src/domains/admin/AdminReportNoteSchemas';
 import {UserAdminResponseSchema} from '@fluxer/schema/src/domains/admin/AdminUserSchemas';
@@ -46,6 +47,10 @@ import {
 	InstanceBillingResponse,
 	InstanceBillingUpdateRequest,
 } from '@fluxer/schema/src/domains/admin/InstanceBillingSchemas';
+import {
+	DistributionPricingConfigResponse,
+	DistributionPricingUpdateRequest,
+} from '@fluxer/schema/src/domains/admin/InstanceDistributionPricingSchemas';
 import {PushRelayConfigResponse, PushRelayConfigUpdateRequest} from '@fluxer/schema/src/domains/admin/PushRelaySchemas';
 import {VoiceP2pConfigResponse, VoiceP2pConfigUpdateRequest} from '@fluxer/schema/src/domains/admin/VoiceP2pSchemas';
 import {
@@ -60,7 +65,9 @@ import {
 	InstanceRegistrationModeSchema,
 	TagStyleSchema,
 } from '@fluxer/schema/src/domains/instance/InstanceSchemas';
+import {MessageEmbedResponse} from '@fluxer/schema/src/domains/message/EmbedSchemas';
 import {MessageResponseSchema} from '@fluxer/schema/src/domains/message/MessageResponseSchemas';
+import {withBase64Binary} from '@fluxer/schema/src/primitives/Base64BinaryFields';
 import {ChannelTypeSchema} from '@fluxer/schema/src/primitives/ChannelValidators';
 import {
 	ContentWarningLevelSchema,
@@ -158,9 +165,9 @@ const SearchIndexTypeEnum = createNamedStringLiteralUnion(
 		['audit_logs', 'audit_logs', 'Audit log search index'],
 		['channel_messages', 'channel_messages', 'Channel message search index'],
 		['guild_members', 'guild_members', 'Guild member search index'],
-		['favorite_memes', 'favorite_memes', 'Favourite meme search index'],
 		['discovery', 'discovery', 'Discovery guild search index'],
 		['threads', 'threads', 'Thread search index'],
+		['all', 'all', 'Every search index, with messages in every channel and DM'],
 	],
 	'Type of search index to refresh',
 );
@@ -308,7 +315,6 @@ export type SearchIndexNameParam = z.infer<typeof SearchIndexNameParam>;
 
 export const RefreshSearchIndexRequest = z.object({
 	guild_id: SnowflakeType.optional().describe('Specific guild ID to reindex'),
-	user_id: SnowflakeType.optional().describe('Specific user ID to reindex'),
 });
 
 export type RefreshSearchIndexRequest = z.infer<typeof RefreshSearchIndexRequest>;
@@ -545,6 +551,11 @@ const SsoConfigResponse = z.object({
 	scope: z.string().nullable(),
 	allowed_domains: SsoAllowedDomainsSchema,
 	auto_provision: z.boolean(),
+	username_from_provider: z
+		.boolean()
+		.describe(
+			"Each SSO sign-in sets the username from the provider, and people can't change it in Fluxer. Only on username instances",
+		),
 	redirect_uri: z.string().nullable(),
 	groups_claim: SsoGroupsClaimSchema.nullable(),
 	group_role_mappings: SsoGroupRoleMappingsSchema,
@@ -611,8 +622,14 @@ const AppPublicConfigResponse = z.object({
 		premium_product_name: z.string(),
 		premium_info_url: z.string().nullable(),
 		sign_in_backdrop_url: z.string().nullable(),
+		premium_page_color: z.string().nullable(),
+		premium_showcase_expressions_url: z.string().nullable(),
+		premium_showcase_profile_url: z.string().nullable(),
+		premium_showcase_stream_url: z.string().nullable(),
+		premium_showcase_upload_url: z.string().nullable(),
 		custom_css: z.string().nullable(),
 		upload_limit_message: z.string().nullable(),
+		trusted_domains: z.array(z.string()),
 	}),
 	setup: z.object({
 		configured: z.boolean(),
@@ -638,6 +655,8 @@ function isAbsoluteHttpUrl(value: string): boolean {
 
 export const UPLOAD_LIMIT_MESSAGE_MAX_LENGTH = 500;
 
+export const TRUSTED_DOMAINS_MAX = 50;
+
 const HEX_THEME_COLOR_PATTERN = /^(?:#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}))?$/;
 
 const AppPublicConfigUpdateRequest = z.object({
@@ -656,8 +675,10 @@ const AppPublicConfigUpdateRequest = z.object({
 			premium_product_name: z.string().trim().min(1).max(40).nullable().optional(),
 			premium_info_url: z.string().trim().max(2048).refine(isAbsoluteHttpUrl).nullish(),
 			sign_in_backdrop_url: z.string().trim().max(2048).nullish(),
+			premium_page_color: z.string().trim().regex(HEX_THEME_COLOR_PATTERN).nullish(),
 			custom_css: z.string().trim().max(32_768).nullish(),
 			upload_limit_message: z.string().trim().max(UPLOAD_LIMIT_MESSAGE_MAX_LENGTH).nullish(),
+			trusted_domains: z.array(z.string().max(255)).max(TRUSTED_DOMAINS_MAX).nullish(),
 		})
 		.register(schemaMetadata, {preserveNullFields: true})
 		.nullish(),
@@ -690,6 +711,7 @@ const InstancePolicyResponse = z.object({
 	direct_messages_disabled: z.boolean(),
 	direct_messages_locked: z.boolean(),
 	friends_disabled: z.boolean().describe('Whether friend requests are disabled instance-wide'),
+	personal_notes_enabled: z.boolean().describe('Whether people can use personal notes'),
 	guild_create_access: z.boolean(),
 	premium_mode: z.enum(['mirror', 'everyone']),
 	services: z.object({
@@ -822,7 +844,11 @@ export const InstanceConfigResponse = z.object({
 	integrations: InstanceIntegrationsResponse,
 	media: InstanceMediaResponse,
 	billing: InstanceBillingResponse,
+	distribution_pricing: DistributionPricingConfigResponse,
 	notice: InstanceNoticeSchema.nullable().describe('Notice shown to everyone on the instance, or null'),
+	warnings: z
+		.array(z.string())
+		.describe('Problems the save found that did not stop it. Always empty outside a save response'),
 });
 
 export type InstanceConfigResponse = z.infer<typeof InstanceConfigResponse>;
@@ -845,6 +871,10 @@ const InstancePolicyUpdateSchema = z.object({
 		.describe(
 			'Whether friend requests are disabled instance-wide. Left out while direct_messages_disabled changes, it takes the same value',
 		),
+	personal_notes_enabled: z
+		.boolean()
+		.optional()
+		.describe('Whether people can use personal notes. Off by default on self-hosted instances'),
 	premium_mode: z.enum(['mirror', 'everyone']).optional(),
 	guild_create_access: z.boolean().optional(),
 	services: z
@@ -896,8 +926,20 @@ export const InstanceConfigUpdateRequest = z.object({
 			scope: z.string().nullish(),
 			allowed_domains: SsoAllowedDomainsSchema.optional(),
 			auto_provision: z.boolean().optional(),
+			username_from_provider: z
+				.boolean()
+				.optional()
+				.describe(
+					"Each SSO sign-in sets the username from the provider, and people can't change it in Fluxer. Only on username instances",
+				),
 			groups_claim: SsoGroupsClaimSchema.nullish(),
 			group_role_mappings: SsoGroupRoleMappingsSchema.optional(),
+			migrate_identities: z
+				.boolean()
+				.optional()
+				.describe(
+					'Only for a save that changes the issuer while accounts are linked to the old one. True moves those links to the new issuer, false leaves them on the old one. Applies to this save only and is never stored',
+				),
 		})
 		.nullish(),
 	app_public: AppPublicConfigUpdateRequest.nullish(),
@@ -978,6 +1020,7 @@ export const InstanceConfigUpdateRequest = z.object({
 		.nullish(),
 	policy: InstancePolicyUpdateSchema.nullish(),
 	billing: InstanceBillingUpdateRequest.nullish(),
+	distribution_pricing: DistributionPricingUpdateRequest.nullish(),
 	notice: z
 		.object({
 			message: z
@@ -1009,8 +1052,20 @@ export const InstanceConfigUpdateRequest = z.object({
 export type InstanceConfigUpdateRequest = z.infer<typeof InstanceConfigUpdateRequest>;
 
 export const BrandingAssetUploadRequest = z.object({
-	kind: z.enum(['icon', 'symbol', 'logo', 'wordmark', 'favicon', 'favicon_dark', 'sign_in_backdrop']),
-	image: z.string().max(16_000_000).nullish(),
+	kind: z.enum([
+		'icon',
+		'symbol',
+		'logo',
+		'wordmark',
+		'favicon',
+		'favicon_dark',
+		'sign_in_backdrop',
+		'premium_showcase_expressions',
+		'premium_showcase_profile',
+		'premium_showcase_stream',
+		'premium_showcase_upload',
+	]),
+	image: withBase64Binary(z.string().max(16_000_000)).nullish(),
 });
 
 export type BrandingAssetUploadRequest = z.infer<typeof BrandingAssetUploadRequest>;
@@ -1253,6 +1308,7 @@ export const IndexRefreshStatusResponse = z.union([
 	z.object({
 		status: IndexRefreshStatusEnum,
 		index_type: z.string().describe('Type of index being refreshed'),
+		phase: z.string().optional().describe('The index an `all` rebuild is working on, or queued before it starts'),
 		total: z.number().optional().describe('Total number of items to index'),
 		indexed: z.number().optional().describe('Number of items indexed so far'),
 		started_at: z.string().optional().describe('ISO 8601 timestamp when the job started'),
@@ -1516,6 +1572,8 @@ const AdminGuildRoleSummarySchema = z.object({
 	permissions: PermissionStringType.describe('The role permissions bitfield'),
 	hoist: z.boolean(),
 	mentionable: z.boolean(),
+	icon: z.string().nullable().describe('The hash of the role icon image, or null'),
+	unicode_emoji: z.string().nullable().describe('The Unicode emoji used as the role icon, or null'),
 });
 const AdminLookupGuildSchema = z.object({
 	id: SnowflakeStringType,
@@ -1530,6 +1588,7 @@ const AdminLookupGuildSchema = z.object({
 	splash: createStringType(1, 256).nullable(),
 	embed_splash: createStringType(1, 256).nullable(),
 	features: z.array(createStringType(1, 256)).max(100),
+	badge_ids: CustomBadgeIdListResponse,
 	verification_level: GuildVerificationLevelSchema,
 	mfa_level: GuildMFALevelSchema,
 	nsfw_level: NSFWLevelSchema,
@@ -1615,9 +1674,12 @@ export const AdminMessageSchema = z.object({
 	author_global_name: z.string().nullable(),
 	author_discriminator: createStringType(1, 10),
 	author_avatar: z.string().nullable(),
+	author_bot: z.boolean().optional(),
+	webhook_id: SnowflakeStringType.nullable().optional(),
 	content: createStringType(0, 4000),
 	timestamp: z.string(),
 	attachments: z.array(AdminMessageAttachmentSchema).max(10),
+	embeds: z.array(MessageEmbedResponse).optional(),
 });
 export const LookupMessageResponse = z.object({
 	messages: z.array(AdminMessageSchema).max(100),
@@ -1706,6 +1768,7 @@ const ReportProfileSnapshotUserSchema = z.object({
 	global_name: z.string().nullable(),
 	bio: z.string().nullable(),
 	pronouns: z.string().nullable(),
+	custom_status: z.string().nullable(),
 	avatar: ReportProfileSnapshotAssetSchema.nullable(),
 	banner: ReportProfileSnapshotAssetSchema.nullable(),
 });

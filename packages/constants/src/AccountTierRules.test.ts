@@ -20,7 +20,6 @@ import {
 	AccountVerificationNeeds,
 	LocalCredentialKinds,
 	localCredentialKindOf,
-	PurchaseBlockedReasons,
 	type TierDenialError,
 	TierDenialErrors,
 	TierExemptions,
@@ -37,7 +36,6 @@ import {
 	resolveEmailDeliveryState,
 	resolveIdentifierFirst,
 	resolveInstantAccountAvailability,
-	resolvePurchaseBlockedReason,
 	resolveVerificationNeed,
 	type TierGateInput,
 } from '@fluxer/constants/src/AccountTierRules';
@@ -612,6 +610,7 @@ describe('resolveInstantAccountAvailability', () => {
 		captchaProvider: CaptchaProviders.ALTCHA,
 		registrationMode: RegistrationModes.OPEN,
 		registrationUrl: null,
+		emailDomainsRestricted: false,
 	};
 
 	it('is available while enabled, with a captcha and open sign-ups', () => {
@@ -631,6 +630,19 @@ describe('resolveInstantAccountAvailability', () => {
 		expect(resolveInstantAccountAvailability({...open, registrationMode: RegistrationModes.CLOSED})).toBe(
 			InstantAccountAvailability.REGISTRATION_CLOSED,
 		);
+	});
+
+	it('needs an email for public sign-ups while allowed email domains are set', () => {
+		expect(resolveInstantAccountAvailability({...open, emailDomainsRestricted: true})).toBe(
+			InstantAccountAvailability.EMAIL_DOMAINS_RESTRICTED,
+		);
+		expect(
+			resolveInstantAccountAvailability({
+				...open,
+				emailDomainsRestricted: true,
+				registrationUrl: {approvalRequired: false},
+			}),
+		).toBe(InstantAccountAvailability.AVAILABLE);
 	});
 
 	it('follows a registration URL over the registration mode', () => {
@@ -665,21 +677,6 @@ describe('requiresLocalCredential', () => {
 		['username', 'off_incomplete', true, true],
 	] as const)('%s %s proven=%s needs credentials: %s', (identityMode, deliveryState, emailProven, expected) => {
 		expect(requiresLocalCredential({identityMode, deliveryState, emailProven})).toBe(expected);
-	});
-});
-
-describe('resolvePurchaseBlockedReason', () => {
-	it('blocks by tier, and verified accounts without a receipt address', () => {
-		expect(resolvePurchaseBlockedReason({tier: AccountTiers.UNCLAIMED, hasEmail: false})).toBe(
-			PurchaseBlockedReasons.UNCLAIMED,
-		);
-		expect(resolvePurchaseBlockedReason({tier: AccountTiers.UNVERIFIED, hasEmail: true})).toBe(
-			PurchaseBlockedReasons.EMAIL_UNVERIFIED,
-		);
-		expect(resolvePurchaseBlockedReason({tier: AccountTiers.VERIFIED, hasEmail: false})).toBe(
-			PurchaseBlockedReasons.NO_RECEIPT_EMAIL,
-		);
-		expect(resolvePurchaseBlockedReason({tier: AccountTiers.VERIFIED, hasEmail: true})).toBeNull();
 	});
 });
 

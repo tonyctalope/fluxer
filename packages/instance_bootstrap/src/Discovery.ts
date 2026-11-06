@@ -12,6 +12,7 @@ import {
 	AccountIdentityModes,
 	TagStyles,
 } from '@fluxer/constants/src/AccountIdentityConstants';
+import {BUILT_IN_GUILD_BADGE_KINDS} from '@fluxer/constants/src/BadgeConstants';
 import {Headers as HttpHeader} from '@fluxer/constants/src/Headers';
 import {HttpStatus, MimeType} from '@fluxer/constants/src/HttpConstants';
 import type {LimitKey} from '@fluxer/constants/src/LimitConfigMetadata';
@@ -24,10 +25,13 @@ import {
 	type InstanceAgePolicyGeo,
 	type InstanceAppRegistration,
 	type InstanceBranding,
+	type InstanceBuiltInGuildBadgeImages,
 	type InstanceCommunity,
 	type InstanceDomainMigration,
 	type InstanceFeatures,
 	type InstanceGif,
+	type InstanceGuildBadge,
+	type InstanceHiddenBuiltInGuildBadges,
 	type InstanceLegal,
 	type InstanceNotice,
 	type InstancePush,
@@ -90,6 +94,10 @@ const BRANDING_URL_KEYS = Object.freeze([
 	'status_page_incident_history_url',
 	'premium_info_url',
 	'sign_in_backdrop_url',
+	'premium_showcase_expressions_url',
+	'premium_showcase_profile_url',
+	'premium_showcase_stream_url',
+	'premium_showcase_upload_url',
 ] as const) satisfies ReadonlyArray<keyof InstanceBranding>;
 
 const SETUP_FLAG_KEYS = Object.freeze([
@@ -109,6 +117,7 @@ interface InstanceDiscoveryEndpoints {
 	readonly gateway: string;
 	readonly api_client: string | null;
 	readonly api_public: string | null;
+	readonly api_transport: string | null;
 	readonly media: string | null;
 	readonly upload_relay: string | null;
 	readonly static_cdn: string | null;
@@ -143,6 +152,12 @@ export interface InstanceDiscoveryDocument {
 	readonly agePolicy: InstanceAgePolicy | null;
 	readonly domainMigration: InstanceDomainMigration | null;
 	readonly notice?: InstanceNotice | null;
+	readonly guildBadges?: ReadonlyArray<InstanceGuildBadge>;
+	readonly guildBadgesPartial?: boolean;
+	readonly customBadgesVersion?: string | null;
+	readonly builtInGuildBadgeImages?: InstanceBuiltInGuildBadgeImages;
+	readonly hiddenBuiltInGuildBadges?: InstanceHiddenBuiltInGuildBadges;
+	readonly hiddenRoleIds?: ReadonlyArray<string>;
 }
 
 interface InstanceDiscoveryAttempt {
@@ -305,6 +320,12 @@ export function parseInstanceDiscoveryDocument(payload: unknown): InstanceDiscov
 		agePolicy: parseAgePolicy(source.age_policy),
 		domainMigration: parseInstanceDomainMigration(source.domain_migration),
 		notice: parseNotice(source.notice),
+		guildBadges: parseGuildBadges(source.guild_badges),
+		guildBadgesPartial: source.guild_badges_partial === true,
+		customBadgesVersion: readNonEmptyString(source, 'custom_badges_version'),
+		builtInGuildBadgeImages: parseBuiltInGuildBadgeImages(source.built_in_guild_badge_images),
+		hiddenBuiltInGuildBadges: parseHiddenBuiltInGuildBadges(source.hidden_built_in_guild_badges),
+		hiddenRoleIds: parseHiddenRoleIds(source.hidden_role_ids),
 	};
 }
 
@@ -529,6 +550,7 @@ function parseEndpoints(value: unknown): InstanceDiscoveryEndpoints {
 		gateway,
 		api_client: normalizeInstanceEndpoint(source.api_client, InstanceEndpointKind.SERVICE),
 		api_public: normalizeInstanceEndpoint(source.api_public, InstanceEndpointKind.SERVICE),
+		api_transport: normalizeInstanceEndpoint(source.api_transport, InstanceEndpointKind.SERVICE),
 		media: normalizeInstanceEndpoint(source.media, InstanceEndpointKind.SERVICE),
 		upload_relay: normalizeInstanceEndpoint(source.upload_relay, InstanceEndpointKind.SERVICE),
 		static_cdn: normalizeInstanceEndpoint(source.static_cdn, InstanceEndpointKind.SERVICE),
@@ -625,6 +647,7 @@ function parseSso(value: unknown): InstanceSso | null {
 	const sso: InstanceSso = {
 		enabled,
 		enforced,
+		username_from_provider: readBoolean(source, 'username_from_provider') ?? false,
 		display_name: readNonEmptyString(source, 'display_name'),
 		button_label: readNonEmptyString(source, 'button_label'),
 		redirect_uri: redirectUri,
@@ -664,6 +687,7 @@ function parseCommunity(value: unknown): InstanceCommunity | null {
 		single_community_guild_id: readNonEmptyString(source, 'single_community_guild_id'),
 		direct_messages_disabled: directMessagesDisabled,
 		friends_disabled: readBoolean(source, 'friends_disabled') ?? directMessagesDisabled,
+		personal_notes_enabled: readBoolean(source, 'personal_notes_enabled') ?? true,
 		guild_create_access: readBoolean(source, 'guild_create_access') ?? true,
 	};
 }
@@ -690,6 +714,58 @@ function parseNotice(value: unknown): InstanceNotice | null {
 		starts_at: readDateString(source, 'starts_at'),
 		ends_at: readDateString(source, 'ends_at'),
 	};
+}
+
+function parseBuiltInGuildBadgeImages(value: unknown): InstanceBuiltInGuildBadgeImages {
+	const source = asRecord(value) ?? {};
+	return {
+		verified: readNonEmptyString(source, 'verified'),
+		partnered: readNonEmptyString(source, 'partnered'),
+		discoverable: readNonEmptyString(source, 'discoverable'),
+	};
+}
+
+function parseHiddenBuiltInGuildBadges(value: unknown): InstanceHiddenBuiltInGuildBadges {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return BUILT_IN_GUILD_BADGE_KINDS.filter((kind) => value.includes(kind));
+}
+
+function parseHiddenRoleIds(value: unknown): Array<string> {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value.filter((id): id is string => typeof id === 'string' && /^\d{1,20}$/.test(id));
+}
+
+function parseGuildBadges(value: unknown): Array<InstanceGuildBadge> {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value.flatMap((entry) => {
+		const source = asRecord(entry);
+		if (source == null) {
+			return [];
+		}
+		const id = readNonEmptyString(source, 'id');
+		const name = readNonEmptyString(source, 'name');
+		const assetUrl = readNonEmptyString(source, 'asset_url');
+		if (id == null || name == null || assetUrl == null) {
+			return [];
+		}
+		const position = readNonEmptyString(source, 'position');
+		return [
+			{
+				id,
+				name,
+				description: readNonEmptyString(source, 'description'),
+				asset_url: assetUrl,
+				href: readAbsoluteHTTPURL(source, 'href'),
+				...(position != null && /^-?[0-9]{1,19}$/.test(position) ? {position} : {}),
+			},
+		];
+	});
 }
 
 function parseServices(value: unknown): InstanceServices | null {
@@ -852,14 +928,25 @@ function parseBranding(value: unknown): Readonly<Partial<InstanceBranding>> {
 			branding[key] = readAbsoluteHTTPURL(source, key);
 		}
 	}
+	const statusPageInstatus = readBoolean(source, 'status_page_instatus');
+	if (statusPageInstatus != null) {
+		branding.status_page_instatus = statusPageInstatus;
+	}
 	if (Object.hasOwn(source, 'theme_color')) {
 		branding.theme_color = readNonEmptyString(source, 'theme_color');
+	}
+	if (Object.hasOwn(source, 'premium_page_color')) {
+		branding.premium_page_color = readNonEmptyString(source, 'premium_page_color');
 	}
 	if (Object.hasOwn(source, 'custom_css')) {
 		branding.custom_css = readNonEmptyString(source, 'custom_css');
 	}
 	if (Object.hasOwn(source, 'upload_limit_message')) {
 		branding.upload_limit_message = readNonEmptyString(source, 'upload_limit_message');
+	}
+	const trustedDomains = readStringArray(source, 'trusted_domains');
+	if (trustedDomains != null) {
+		branding.trusted_domains = trustedDomains;
 	}
 	return branding;
 }

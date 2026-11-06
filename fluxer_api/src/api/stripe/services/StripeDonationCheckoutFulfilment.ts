@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {
+	type BillingDocumentService,
+	billingDocumentAttachment,
+	createBillingDocumentService,
+} from '@app/api/billing_documents/BillingDocumentService';
 import {Config} from '@app/api/Config';
 import type {DonationRepository} from '@app/api/donation/DonationRepository';
 import {Logger} from '@app/api/Logger';
@@ -7,7 +12,7 @@ import {getPrimarySubscriptionItem, getSubscriptionItemPeriodEnd} from '@app/api
 import {extractId} from '@app/api/stripe/StripeUtils';
 import {StripeError} from '@fluxer/errors/src/domains/payment/StripeError';
 import type {ICacheService} from '@pkgs/cache/src/ICacheService';
-import type {IEmailService} from '@pkgs/email/src/IEmailService';
+import type {BillingDocumentAttachment, IEmailService} from '@pkgs/email/src/IEmailService';
 import {seconds} from 'itty-time';
 import type Stripe from 'stripe';
 
@@ -25,6 +30,12 @@ interface DonationCustomerDetails {
 	taxIdType: string | undefined;
 }
 
+interface OneTimeDonationReceipt {
+	paidAt: Date;
+	reference: string | null;
+	document: BillingDocumentAttachment | null;
+}
+
 interface DonationSubscriptionDetails {
 	amountCents: number | null;
 	currency: string | null;
@@ -40,6 +51,7 @@ export class StripeDonationCheckoutFulfilment {
 		private donationRepository: DonationRepository,
 		private emailService: IEmailService,
 		private cacheService: ICacheService,
+		private documents: BillingDocumentService | null = createBillingDocumentService(stripe),
 	) {}
 
 	async registerDonation(session: Stripe.Checkout.Session, donation: DonationCheckoutDonor): Promise<void> {
@@ -140,6 +152,7 @@ export class StripeDonationCheckoutFulfilment {
 				interval: 'once',
 				manageUrl,
 				locale: donationLocale,
+				...(await this.loadOneTimeReceipt(session, email, donationLocale)),
 			});
 		}
 		Logger.info(
@@ -159,6 +172,27 @@ export class StripeDonationCheckoutFulfilment {
 		);
 	}
 
+	private async loadOneTimeReceipt(
+		session: Stripe.Checkout.Session,
+		email: string,
+		locale: string | null,
+	): Promise<OneTimeDonationReceipt> {
+		const paymentIntentId = extractId(session.payment_intent);
+		if (!this.stripe || !paymentIntentId) {
+			return {paidAt: new Date(session.created * 1000), reference: null, document: null};
+		}
+		const intent = await this.stripe.paymentIntents.retrieve(paymentIntentId, {expand: ['latest_charge']});
+		const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
+		const document = session.invoice
+			? null
+			: await this.documents?.issueForCheckoutSession(session.id, {userId: null, locale, donorEmail: email});
+		return {
+			paidAt: charge ? new Date(charge.created * 1000) : new Date(session.created * 1000),
+			reference: document?.display_number ?? charge?.receipt_number ?? null,
+			document: document ? billingDocumentAttachment(document) : null,
+		};
+	}
+
 	private async sendDonationConfirmationOnce({
 		sessionId,
 		email,
@@ -167,6 +201,7 @@ export class StripeDonationCheckoutFulfilment {
 		interval,
 		manageUrl,
 		locale,
+		...receipt
 	}: {
 		sessionId: string;
 		email: string;
@@ -175,7 +210,7 @@ export class StripeDonationCheckoutFulfilment {
 		interval: string;
 		manageUrl: string;
 		locale: string | null;
-	}): Promise<void> {
+	} & Partial<OneTimeDonationReceipt>): Promise<void> {
 		const confirmationSentKey = this.getDonationConfirmationSentKey(sessionId);
 		if (await this.cacheService.get<boolean>(confirmationSentKey)) {
 			Logger.debug({sessionId}, 'Donation confirmation already sent for checkout session');
@@ -184,7 +219,7 @@ export class StripeDonationCheckoutFulfilment {
 		const sent = await this.emailService.send(
 			'donation_confirmation',
 			email,
-			{amountCents, currency, interval, manageUrl},
+			{amountCents, currency, interval, manageUrl, ...receipt},
 			locale,
 		);
 		if (!sent) {

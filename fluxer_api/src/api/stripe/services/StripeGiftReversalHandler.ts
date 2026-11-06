@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import type {UserID} from '@app/api/BrandedTypes';
 import type {UserRow} from '@app/api/database/types/UserTypes';
 import type {IGatewayService} from '@app/api/infrastructure/IGatewayService';
 import type {PremiumStateReconciliationQueueService} from '@app/api/infrastructure/PremiumStateReconciliationQueueService';
 import {Logger} from '@app/api/Logger';
+import {getWorkerService} from '@app/api/middleware/ServiceRegistry';
 import {addGiftCodeDuration, type GiftCode} from '@app/api/models/GiftCode';
 import type {User} from '@app/api/models/User';
+import {OPERATOR_PASS_LABS_VISIONARY_ROLE_SYNC_TASK} from '@app/api/operator_pass/OperatorPassLabsRole';
 import type {StoreEntitlementService} from '@app/api/store_billing/StoreEntitlementService';
 import {getStripeClient} from '@app/api/stripe/StripeClient';
 import {
@@ -14,12 +17,16 @@ import {
 	getGiftTrialSeconds,
 } from '@app/api/stripe/StripeGiftTrialMetadata';
 import {mirrorSubscription} from '@app/api/stripe/StripeMirror';
+import {getSubscriptionBillingCycle} from '@app/api/stripe/StripeSubscriptionPeriod';
+import {enqueueBillingEmail} from '@app/api/stripe/services/BillingEmailService';
+import {GIFT_NOTICE_MIN_LEAD_SECONDS} from '@app/api/stripe/services/BillingNoticeSchedule';
 import type {UserRepository} from '@app/api/user/repositories/UserRepository';
 import {clearPerksSanitizedFlag} from '@app/api/user/UserHelpers';
 import {dispatchUserUpdate} from '@app/api/user/UserMappers';
 import {UserPremiumTypes} from '@fluxer/constants/src/UserConstants';
 import {MS_PER_MINUTE, MS_PER_SECOND} from '@fluxer/date_utils/src/DateConstants';
 import {StripeError} from '@fluxer/errors/src/domains/payment/StripeError';
+import type {BillingRecurringPlan} from '@pkgs/email/src/IEmailService';
 import Stripe from 'stripe';
 
 interface RemainingGiftEntitlement {
@@ -32,9 +39,24 @@ interface GiftTrialCut {
 	trialEnd: Date | null;
 	cancel: boolean;
 	premiumUntil: Date;
+	plan: BillingRecurringPlan;
 }
 
+interface GiftReversalOutcome {
+	billingResumed: BillingRecurringPlan | null;
+}
+
+const BILLING_UNCHANGED: GiftReversalOutcome = {billingResumed: null};
+
 const MIN_REMAINING_TRIAL_MS = MS_PER_MINUTE;
+
+function trialEndsBeforeNotice(trialEnd: Date): boolean {
+	return trialEnd.getTime() - Date.now() < GIFT_NOTICE_MIN_LEAD_SECONDS * MS_PER_SECOND;
+}
+
+function billingResumesWithoutNotice(cut: GiftTrialCut): boolean {
+	return !cut.cancel && (!cut.trialEnd || trialEndsBeforeNotice(cut.trialEnd));
+}
 
 export class StripeGiftReversalHandler {
 	constructor(
@@ -50,15 +72,15 @@ export class StripeGiftReversalHandler {
 			reason: string;
 			chargeId?: string;
 		},
-	): Promise<void> {
+	): Promise<GiftReversalOutcome> {
 		const redeemerId = giftCode.redeemedByUserId;
 		if (!redeemerId) {
-			return;
+			return BILLING_UNCHANGED;
 		}
 		const redeemer = await this.userRepository.findUnique(redeemerId);
 		if (!redeemer) {
 			Logger.warn({giftCode: giftCode.code, redeemerId}, 'Gift redeemer not found for premium reversal');
-			return;
+			return BILLING_UNCHANGED;
 		}
 		if (redeemer.stripeSubscriptionId || redeemer.stripeCustomerId) {
 			const redeemedGifts = await this.userRepository.findGiftCodesByRedeemer(redeemer.id);
@@ -78,15 +100,15 @@ export class StripeGiftReversalHandler {
 					currentGiftEnd != null && (newGiftEnd == null || currentGiftEnd.getTime() > newGiftEnd.getTime());
 				trialCut = await this.planGiftTrialCut(redeemer, giftCode, new Date());
 			}
-			if (
+			const reversed =
 				(needsAdjustment || trialCut) &&
 				(await this.commitReversal(
 					redeemer,
 					giftCode,
 					needsAdjustment ? {premium_gift_extension_ends_at: newGiftEnd} : {},
 					{reapplyIfMarked, trialCut},
-				))
-			) {
+				));
+			if (reversed) {
 				Logger.info(
 					{
 						giftCode: giftCode.code,
@@ -114,11 +136,13 @@ export class StripeGiftReversalHandler {
 				},
 				'Enqueued reconciliation after gift reversal for user with Stripe identity',
 			);
-			return;
+			return {
+				billingResumed: reversed && trialCut && billingResumesWithoutNotice(trialCut) ? trialCut.plan : null,
+			};
 		}
 		if (await this.storeEntitlementService?.getActiveStoreEntitlement(redeemer.id)) {
 			await this.reverseGiftForStoreSubscriber(redeemer, giftCode, context);
-			return;
+			return BILLING_UNCHANGED;
 		}
 		const redeemedGifts = await this.userRepository.findGiftCodesByRedeemer(redeemer.id);
 		const hasGiftInRedeemerIndex = redeemedGifts.some((entry) => entry.code === giftCode.code);
@@ -132,7 +156,7 @@ export class StripeGiftReversalHandler {
 				},
 				'Skipped direct gift premium revocation because redeemer gift history is incomplete',
 			);
-			return;
+			return BILLING_UNCHANGED;
 		}
 		const remainingEntitlement = this.computeRemainingGiftEntitlement(redeemedGifts, giftCode.code);
 		if (remainingEntitlement.hasLifetimeGift) {
@@ -144,7 +168,7 @@ export class StripeGiftReversalHandler {
 				},
 				'Skipped direct gift premium revocation because user has another redeemed lifetime gift',
 			);
-			return;
+			return BILLING_UNCHANGED;
 		}
 		const entitlementUntil = remainingEntitlement.giftExtensionEndsAt;
 		if (entitlementUntil && entitlementUntil.getTime() > Date.now()) {
@@ -174,7 +198,7 @@ export class StripeGiftReversalHandler {
 				},
 				'Adjusted gift extension after gift premium reversal',
 			);
-			return;
+			return BILLING_UNCHANGED;
 		}
 		if (redeemer.premiumType === UserPremiumTypes.LIFETIME) {
 			Logger.warn(
@@ -185,7 +209,7 @@ export class StripeGiftReversalHandler {
 				},
 				'Skipped lifetime premium revocation for gift reversal to preserve explicit lifetime overrides',
 			);
-			return;
+			return BILLING_UNCHANGED;
 		}
 		await this.commitReversal(
 			redeemer,
@@ -206,6 +230,7 @@ export class StripeGiftReversalHandler {
 			},
 			'Premium revoked after gift premium reversal',
 		);
+		return BILLING_UNCHANGED;
 	}
 
 	private async reverseGiftForStoreSubscriber(
@@ -365,6 +390,7 @@ export class StripeGiftReversalHandler {
 			trialEnd: endsNow ? null : new Date(cutEndMs),
 			cancel: endsNow && (subscription.cancel_at_period_end || subscription.cancel_at != null),
 			premiumUntil: new Date(premiumUntilMs),
+			plan: getSubscriptionBillingCycle(subscription) ?? 'monthly',
 		};
 	}
 
@@ -397,6 +423,22 @@ export class StripeGiftReversalHandler {
 			redeemer.id,
 			'Mirror upsert failed after Stripe write; reconciler will heal',
 		);
+		if (cut.trialEnd && !cut.cancel && !trialEndsBeforeNotice(cut.trialEnd)) {
+			await this.queueShortenedTrialNotice(subscription, cut.trialEnd);
+		}
+	}
+
+	private async queueShortenedTrialNotice(subscription: Stripe.Subscription, trialEnd: Date): Promise<void> {
+		try {
+			await enqueueBillingEmail(getWorkerService(), {
+				kind: 'subscription_notice',
+				id: subscription.id,
+				notice: 'gift',
+				chargeAt: Math.floor(trialEnd.getTime() / MS_PER_SECOND),
+			});
+		} catch (error) {
+			Logger.error({error, subscriptionId: subscription.id}, 'Shortened a gift trial but could not queue the notice');
+		}
 	}
 
 	private async commitReversal(
@@ -439,7 +481,25 @@ export class StripeGiftReversalHandler {
 			throw error;
 		}
 		await dispatchUserUpdate(this.gatewayService, updatedUser);
+		if (redeemer.premiumType === UserPremiumTypes.LIFETIME && updatedUser.premiumType !== UserPremiumTypes.LIFETIME) {
+			await this.queueLabsVisionaryRoleSync(redeemer.id);
+		}
 		return true;
+	}
+
+	private async queueLabsVisionaryRoleSync(userId: UserID): Promise<void> {
+		try {
+			await getWorkerService().addJob(
+				OPERATOR_PASS_LABS_VISIONARY_ROLE_SYNC_TASK,
+				{user_id: userId.toString()},
+				{jobKey: `operator-pass-labs-visionary:${userId}`},
+			);
+		} catch (error) {
+			Logger.error(
+				{userId, error},
+				'Could not queue the Labs Visionary role update after a gift reversal, the daily sync removes it',
+			);
+		}
 	}
 
 	private async releaseReversalClaim(redeemer: User, giftCode: GiftCode, seconds: number): Promise<void> {

@@ -7,6 +7,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +21,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/compose-spec/compose-go/v2/types"
+
+	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/deploy"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/engine"
+	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/envfile"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/host"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/instance"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/release"
@@ -37,8 +43,17 @@ var ErrNeverStarted = errors.New("backup: Fluxer has never run and has no data y
 
 type CreateOptions struct {
 	Reason   string
+	Scope    string
 	Progress func(stage string)
 	OnEvent  func(engine.Event)
+}
+
+type MissingDataError struct {
+	Volume string
+}
+
+func (e *MissingDataError) Error() string {
+	return fmt.Sprintf("backup: no database data found in volume %s or a bind mount", e.Volume)
 }
 
 type DiskError struct {
@@ -95,11 +110,12 @@ func Create(ctx context.Context, inst *instance.Instance, p *engine.Project, opt
 		m.Release = inst.State.Release
 	}
 	values := instanceValues(inst)
-	bundledDB := !externalPostgres(values)
+	model := projectModel(ctx, inst, p)
+	bundledDB := bundledDatabase(values, model)
 	if !bundledDB {
 		m.Skipped = append(m.Skipped, SkippedDatabase)
 	}
-	volumes, err := volumesToCopy(ctx, inst, values, p, m)
+	volumes, err := volumesToCopy(ctx, inst, values, p, model, m, opts.Scope, true)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +124,10 @@ func Create(ctx context.Context, inst *instance.Instance, p *engine.Project, opt
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := findVolume(have, p.Name, "postgres-data"); !ok {
+		if _, ok := dataVolume(model, p.Name, have, "postgres-data"); !ok {
+			if ps, err := p.PS(ctx); err == nil && len(ps) > 0 {
+				return nil, &MissingDataError{Volume: p.Name + "_postgres-data"}
+			}
 			return nil, ErrNeverStarted
 		}
 	}
@@ -116,11 +135,11 @@ func Create(ctx context.Context, inst *instance.Instance, p *engine.Project, opt
 	if err != nil {
 		return nil, err
 	}
-	image, err := helperImage(ctx, inst, p)
+	image, err := helperImage(ctx, inst, p, model)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkDisk(ctx, p, image, dir, volumes); err != nil {
+	if err := checkDisk(ctx, p, image, dir, volumes, bundledDB); err != nil {
 		return nil, err
 	}
 
@@ -157,7 +176,8 @@ func Create(ctx context.Context, inst *instance.Instance, p *engine.Project, opt
 	}
 
 	if len(volumes) > 0 {
-		if err := copyVolumes(ctx, w, p, image, volumes, running, progress, opts.OnEvent); err != nil {
+		spool := final + ".vol" + PartialSuffix
+		if err := copyVolumes(ctx, w, p, image, volumes, running, spool, progress, opts.OnEvent); err != nil {
 			return nil, err
 		}
 		for _, v := range volumes {
@@ -177,7 +197,7 @@ func Create(ctx context.Context, inst *instance.Instance, p *engine.Project, opt
 	if err != nil {
 		return nil, err
 	}
-	return &Info{File: filepath.Base(final), Path: final, CreatedAt: now, Release: m.Release, SizeBytes: fi.Size()}, nil
+	return infoFor(final, m, fi.Size()), nil
 }
 
 func syncDir(dir string) {
@@ -211,6 +231,17 @@ func externalPostgres(values map[string]string) bool {
 	return false
 }
 
+func bundledDatabase(values map[string]string, model *types.Project) bool {
+	if externalPostgres(values) {
+		return false
+	}
+	if model == nil {
+		return true
+	}
+	_, ok := model.Services[postgresService]
+	return ok
+}
+
 func externalUploads(inst *instance.Instance, values map[string]string) bool {
 	if inst.State != nil && inst.State.Settings[settings.StorageEndpoint] != "" {
 		return true
@@ -225,27 +256,137 @@ func externalUploads(inst *instance.Instance, values map[string]string) bool {
 type volumeRef struct {
 	short string
 	full  string
+	bind  string
 }
 
-func volumesToCopy(ctx context.Context, inst *instance.Instance, values map[string]string, p *engine.Project, m *Manifest) ([]volumeRef, error) {
-	skipUploads := externalUploads(inst, values)
-	if skipUploads {
-		m.Skipped = append(m.Skipped, SkippedUploads)
+func (v volumeRef) mount(target string, readOnly bool) engine.Mount {
+	return engine.Mount{Volume: v.full, Bind: v.bind, Target: target, ReadOnly: readOnly}
+}
+
+func dataVolume(model *types.Project, project string, have []engine.Volume, short string) (volumeRef, bool) {
+	if bind := boundData(model, short); bind != "" {
+		return volumeRef{short: short, bind: bind}, true
 	}
+	if full, ok := findVolume(have, project, short); ok {
+		return volumeRef{short: short, full: full}, true
+	}
+	return volumeRef{}, false
+}
+
+func boundData(model *types.Project, short string) string {
+	dm, ok := stack.DataMounts[short]
+	if !ok || model == nil {
+		return ""
+	}
+	for _, v := range model.Services[dm.Service].Volumes {
+		if v.Type == types.VolumeTypeBind && v.Target == dm.Target && v.Source != "" {
+			return v.Source
+		}
+	}
+	return ""
+}
+
+func volumesToCopy(ctx context.Context, inst *instance.Instance, values map[string]string, p *engine.Project, model *types.Project, m *Manifest, scope string, mark bool) ([]volumeRef, error) {
 	have, err := p.Engine.Volumes(ctx, p.Name)
 	if err != nil {
 		return nil, err
 	}
+	definition := ""
+	if scope == ScopeWithoutUploads {
+		definition = uploadsDefinition(inst)
+	}
+	return pickVolumes(model, p.Name, have, externalUploads(inst, values), scope, definition, mark, m), nil
+}
+
+func pickVolumes(model *types.Project, project string, have []engine.Volume, skipUploads bool, scope, definition string, mark bool, m *Manifest) []volumeRef {
+	if skipUploads {
+		m.Skipped = append(m.Skipped, SkippedUploads)
+	}
 	var out []volumeRef
 	for _, short := range stack.BackupVolumes {
-		if skipUploads && short == "seaweedfs-data" {
+		v, ok := dataVolume(model, project, have, short)
+		if short == UploadsVolume && ok && !skipUploads && scope == ScopeWithoutUploads && definition != "" {
+			if ref := uploadsRef(v, have, mark); ref != nil {
+				ref.Definition = definition
+				m.Scope, m.Uploads = ScopeWithoutUploads, ref
+				continue
+			}
+		}
+		if skipUploads && short == UploadsVolume {
 			continue
 		}
-		if full, ok := findVolume(have, p.Name, short); ok {
-			out = append(out, volumeRef{short: short, full: full})
+		if ok {
+			out = append(out, v)
 		}
 	}
-	return out, nil
+	return out
+}
+
+const UploadsIDFile = ".rexctl-uploads-id"
+
+func uploadsRef(v volumeRef, have []engine.Volume, mark bool) *UploadsRef {
+	if v.bind != "" {
+		ino, ok := fileInode(v.bind)
+		if !ok {
+			return nil
+		}
+		id, err := bindID(v.bind, mark)
+		if err != nil || (mark && id == "") {
+			return nil
+		}
+		return &UploadsRef{Bind: v.bind, ID: id, Inode: ino}
+	}
+	ref := &UploadsRef{Volume: v.full}
+	for _, h := range have {
+		if h.Name == v.full {
+			ref.CreatedAt = h.CreatedAt
+		}
+	}
+	return ref
+}
+
+func UploadsDefinition(set *stack.Set, st *instance.State) string {
+	def, err := stack.ServicesDefinition(set, stack.OverlaysFor(st.Settings), st.Images.Refs, stack.UploadsServices...)
+	if err != nil {
+		return ""
+	}
+	return stack.Hash([]byte(settings.ImageRef(st.Settings, st.Images.Refs, "seaweedfs") + "\n" + def))
+}
+
+func uploadsDefinition(inst *instance.Instance) string {
+	if inst == nil || inst.State == nil {
+		return ""
+	}
+	set, err := release.LoadSet(inst, inst.State.Release)
+	if err != nil {
+		if set, err = inst.Set(); err != nil {
+			return ""
+		}
+	}
+	return UploadsDefinition(set, inst.State)
+}
+
+func bindID(dir string, create bool) (string, error) {
+	path := filepath.Join(dir, UploadsIDFile)
+	data, err := os.ReadFile(path)
+	if err == nil && strings.TrimSpace(string(data)) != "" {
+		return strings.TrimSpace(string(data)), nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if !create {
+		return "", nil
+	}
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(raw)
+	if err := envfile.WriteFileAtomic(path, []byte(id+"\n"), false); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func findVolume(vols []engine.Volume, project, short string) (string, bool) {
@@ -262,25 +403,28 @@ func findVolume(vols []engine.Volume, project, short string) (string, bool) {
 	return "", false
 }
 
-func helperImage(ctx context.Context, inst *instance.Instance, p *engine.Project) (string, error) {
-	if p.Model != nil {
-		if img := p.Image(postgresService); img != "" {
-			return img, nil
+var helperServices = []string{postgresService, "valkey", "nats"}
+
+func helperImage(ctx context.Context, inst *instance.Instance, p *engine.Project, model *types.Project) (string, error) {
+	cs, _ := p.PS(ctx)
+	for _, svc := range helperServices {
+		if model != nil {
+			if img := model.Services[svc].Image; img != "" {
+				return img, nil
+			}
 		}
-	}
-	if cs, err := p.PS(ctx); err == nil {
 		for _, c := range cs {
-			if c.Service == postgresService && c.Image != "" {
+			if c.Service == svc && c.Image != "" {
 				return c.Image, nil
 			}
 		}
-	}
-	if inst.State != nil {
-		if img := inst.State.Images.Refs[postgresService]; img != "" {
-			return img, nil
+		if inst.State != nil {
+			if img := inst.State.Images.Refs[svc]; img != "" {
+				return img, nil
+			}
 		}
 	}
-	return "", errors.New("backup: no postgres image to run the copy with")
+	return "", errors.New("backup: no image to run the copy with")
 }
 
 func helper(ctx context.Context, p *engine.Project, image string, mounts []engine.Mount, stdin io.Reader, stdout io.Writer, entrypoint string, args ...string) error {
@@ -314,21 +458,78 @@ func (e *HelperError) Error() string {
 
 func (e *HelperError) Unwrap() error { return e.Err }
 
-func checkDisk(ctx context.Context, p *engine.Project, image, dir string, volumes []volumeRef) error {
+func Estimate(ctx context.Context, inst *instance.Instance, p *engine.Project, scope string) (uint64, error) {
+	values := instanceValues(inst)
+	model := projectModel(ctx, inst, p)
+	volumes, err := volumesToCopy(ctx, inst, values, p, model, &Manifest{}, scope, false)
+	if err != nil {
+		return 0, err
+	}
+	var image string
+	if len(volumes) > 0 {
+		if image, err = helperImage(ctx, inst, p, model); err != nil {
+			return 0, err
+		}
+	}
+	return diskNeed(ctx, p, image, volumes, bundledDatabase(values, model))
+}
+
+func projectModel(ctx context.Context, inst *instance.Instance, p *engine.Project) *types.Project {
+	if p.Model != nil {
+		return p.Model
+	}
+	if loaded, err := deploy.Load(ctx, inst, p.Engine); err == nil {
+		return loaded.Model
+	}
+	return nil
+}
+
+func checkDisk(ctx context.Context, p *engine.Project, image, dir string, volumes []volumeRef, bundledDB bool) error {
 	free, err := host.FreeDisk(dir)
-	if err != nil || len(volumes) == 0 {
+	if err != nil {
 		return nil
 	}
+	need, err := diskNeed(ctx, p, image, volumes, bundledDB)
+	if err != nil {
+		return err
+	}
+	if free < need {
+		return &DiskError{Dir: dir, Need: need, Available: free}
+	}
+	return nil
+}
+
+func diskNeed(ctx context.Context, p *engine.Project, image string, volumes []volumeRef, bundledDB bool) (uint64, error) {
+	var db uint64
+	if bundledDB {
+		db = databaseSize(ctx, p)
+	}
+	var vol uint64
+	if len(volumes) > 0 {
+		kb, err := volumesSize(ctx, p, image, volumes)
+		if err != nil {
+			return 0, err
+		}
+		vol = kb * 1024
+	}
+	return backupDiskNeed(db, vol), nil
+}
+
+func backupDiskNeed(db, vol uint64) uint64 {
+	return (db + vol*2) * diskHeadroomPct / 100
+}
+
+func volumesSize(ctx context.Context, p *engine.Project, image string, volumes []volumeRef) (uint64, error) {
 	var mounts []engine.Mount
 	var paths []string
 	for i, v := range volumes {
 		mp := "/v/" + strconv.Itoa(i)
-		mounts = append(mounts, engine.Mount{Volume: v.full, Target: mp, ReadOnly: true})
+		mounts = append(mounts, v.mount(mp, true))
 		paths = append(paths, mp)
 	}
 	var out bytes.Buffer
 	if err := helper(ctx, p, image, mounts, nil, &out, "du", append([]string{"-sk"}, paths...)...); err != nil {
-		return fmt.Errorf("backup: measuring volumes: %w", err)
+		return 0, fmt.Errorf("backup: measuring volumes: %w", err)
 	}
 	var kb uint64
 	sc := bufio.NewScanner(&out)
@@ -342,11 +543,21 @@ func checkDisk(ctx context.Context, p *engine.Project, image, dir string, volume
 			kb += n
 		}
 	}
-	need := kb * 1024 * diskHeadroomPct / 100
-	if free < need {
-		return &DiskError{Dir: dir, Need: need, Available: free}
+	return kb, nil
+}
+
+func databaseSize(ctx context.Context, p *engine.Project) uint64 {
+	var out bytes.Buffer
+	err := p.Exec(ctx, postgresService, engine.ExecOptions{Stdout: &out, KillOnCancel: true}, "sh", "-c",
+		`exec psql -X -tA -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c 'select pg_database_size(current_database())'`)
+	if err != nil {
+		return 0
 	}
-	return nil
+	n, err := strconv.ParseUint(strings.TrimSpace(out.String()), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func instanceFiles(dir string) ([]string, error) {
@@ -386,8 +597,8 @@ func addInstanceFiles(w *archiveWriter, inst *instance.Instance) error {
 			return err
 		}
 	}
-	for _, sub := range []string{instance.CertsDir, instance.CaddyDropInDir} {
-		if err := addTree(w, filepath.Join(dir, sub), FilesPrefix+sub, 0); err != nil {
+	for _, sub := range []string{instance.CertsDir, instance.CADir, instance.CaddyDropInDir, stack.GeneratedDir} {
+		if err := addTree(w, filepath.Join(dir, filepath.FromSlash(sub)), FilesPrefix+sub, 0); err != nil {
 			return err
 		}
 	}
@@ -510,8 +721,32 @@ func restartServices(ctx context.Context, p *engine.Project, running []string, o
 	return nil
 }
 
-func copyVolumes(ctx context.Context, w *archiveWriter, p *engine.Project, image string, volumes []volumeRef, running []string, progress func(string), onEvent func(engine.Event)) (err error) {
+type CompressError struct {
+	Err error
+}
+
+func (e *CompressError) Error() string { return "backup: compressing the backup: " + e.Err.Error() }
+
+func (e *CompressError) Unwrap() error { return e.Err }
+
+func copyVolumes(ctx context.Context, w *archiveWriter, p *engine.Project, image string, volumes []volumeRef, running []string, spool string, progress func(string), onEvent func(engine.Event)) error {
+	if err := spoolVolumes(ctx, spool, p, image, volumes, running, progress, onEvent); err != nil {
+		return err
+	}
+	defer os.Remove(spool)
+	if err := ctx.Err(); err != nil {
+		return &InterruptedError{Restarted: true, Err: err}
+	}
+	progress(StageCompressing)
+	return compressSpool(ctx, w, spool)
+}
+
+func spoolVolumes(ctx context.Context, spoolPath string, p *engine.Project, image string, volumes []volumeRef, running []string, progress func(string), onEvent func(engine.Event)) (err error) {
 	progress(StageStopping)
+	spool, serr := createSpool(spoolPath)
+	if serr != nil {
+		return serr
+	}
 	defer func() {
 		if len(running) == 0 {
 			return
@@ -528,25 +763,56 @@ func copyVolumes(ctx context.Context, w *archiveWriter, p *engine.Project, image
 		}
 	}()
 	if err := p.Stop(context.WithoutCancel(ctx)); err != nil {
+		spool.abort()
 		return err
 	}
 	if err := ctx.Err(); err != nil {
+		spool.abort()
 		return err
 	}
 	progress(StageVolumes)
 	for _, v := range volumes {
-		if err := copyVolume(ctx, w, p, image, v); err != nil {
+		if err := copyVolume(ctx, spool, p, image, v); err != nil {
+			spool.abort()
 			return err
 		}
 	}
+	if err := spool.finish(); err != nil {
+		spool.abort()
+		return err
+	}
 	return nil
+}
+
+func compressSpool(ctx context.Context, w *archiveWriter, spoolPath string) error {
+	f, err := os.Open(spoolPath)
+	if err != nil {
+		return &CompressError{Err: err}
+	}
+	defer f.Close()
+	tr := tar.NewReader(bufio.NewReaderSize(f, 1<<20))
+	for {
+		if err := ctx.Err(); err != nil {
+			return &InterruptedError{Restarted: true, Err: err}
+		}
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return &CompressError{Err: err}
+		}
+		if err := w.add(hdr, tr); err != nil {
+			return &CompressError{Err: err}
+		}
+	}
 }
 
 const volumeTarScript = `b=$(find /data -type f -exec stat -c '%i %s' {} + | awk '!seen[$1]++ { t += $2 } END { print t + 0 }') || exit 1
 tar -cf - -C /data . || exit 1
 echo "rexctl-bytes $b" >&2`
 
-func copyVolume(ctx context.Context, w *archiveWriter, p *engine.Project, image string, v volumeRef) error {
+func copyVolume(ctx context.Context, spool *volumeSpool, p *engine.Project, image string, v volumeRef) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	pr, pw := io.Pipe()
@@ -557,14 +823,14 @@ func copyVolume(ctx context.Context, w *archiveWriter, p *engine.Project, image 
 			Image:      image,
 			Entrypoint: []string{"sh", "-c"},
 			Command:    []string{volumeTarScript},
-			Mounts:     []engine.Mount{{Volume: v.full, Target: "/data", ReadOnly: true}},
+			Mounts:     []engine.Mount{v.mount("/data", true)},
 			Stdout:     pw,
 			Stderr:     &stderr,
 		})
 		pw.CloseWithError(err)
 		done <- err
 	}()
-	copied, werr := relayVolume(w, v.short, tar.NewReader(pr))
+	copied, werr := relayVolume(spool, v.short, tar.NewReader(pr))
 	if werr != nil {
 		cancel()
 		pr.CloseWithError(werr)
@@ -604,7 +870,7 @@ func measuredBytes(stderr string) (int64, bool) {
 	return 0, false
 }
 
-func relayVolume(w *archiveWriter, short string, tr *tar.Reader) (int64, error) {
+func relayVolume(spool *volumeSpool, short string, tr *tar.Reader) (int64, error) {
 	var copied int64
 	for {
 		hdr, err := tr.Next()
@@ -616,6 +882,10 @@ func relayVolume(w *archiveWriter, short string, tr *tar.Reader) (int64, error) 
 		}
 		inner := strings.TrimPrefix(strings.TrimPrefix(hdr.Name, "./"), "/")
 		inner = strings.TrimSuffix(inner, "/")
+		if short == UploadsVolume && inner == UploadsIDFile && hdr.Typeflag == tar.TypeReg {
+			copied += hdr.Size
+			continue
+		}
 		name := VolumesPrefix + short
 		if inner != "" && inner != "." {
 			name += "/" + inner
@@ -647,7 +917,7 @@ func relayVolume(w *archiveWriter, short string, tr *tar.Reader) (int64, error) 
 		default:
 			continue
 		}
-		if err := w.add(out, tr); err != nil {
+		if err := spool.add(out, tr); err != nil {
 			return copied, err
 		}
 	}

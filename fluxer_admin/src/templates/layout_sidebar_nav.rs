@@ -249,6 +249,7 @@ pub const NAV_SECTIONS: &[NavSection] = &[
                     acl::INSTANCE_LIMIT_CONFIG_UPDATE
                 ]
             ),
+            item!("Badges", "/badges", "badges", [acl::BADGE_LIST]),
             item!(
                 "Admin API Keys",
                 "/admin-api-keys",
@@ -265,13 +266,6 @@ pub const NAV_SECTIONS: &[NavSection] = &[
                 "/gift-codes",
                 "gift-codes",
                 [acl::GIFT_CODES_GENERATE]
-            ),
-            item!(
-                "Operator Pass Waitlist",
-                "/operator-pass-waitlist",
-                "operator-pass-waitlist",
-                [acl::OPERATOR_PASS_WAITLIST_STATS],
-                hosted
             ),
             item!(
                 "Operators' Wall",

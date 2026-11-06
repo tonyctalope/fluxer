@@ -7,6 +7,16 @@ export const OPEN_QUICK_CSS_EDITOR_DESCRIPTOR = msg({
 	comment:
 		'Button in Settings > Themes that opens the quick CSS editor in its own window. Also the settings search entry and the keyboard shortcut action for it. Keep short, sentence case.',
 });
+export const TURN_CUSTOM_CSS_ON_OR_OFF_DESCRIPTOR = msg({
+	message: 'Turn custom CSS on or off',
+	comment:
+		'Keyboard shortcut action that stops applying quick CSS and saved themes in this tab, for example when CSS breaks the app. Also used in the quick CSS editor.',
+});
+export const CUSTOM_CSS_IS_OFF_DESCRIPTOR = msg({
+	message: 'Custom CSS is off.',
+	comment:
+		'Shown in a notice bar and in the quick CSS editor while quick CSS and saved themes are turned off in this tab, for example after CSS broke the app.',
+});
 export const USE_DESKTOP_APP_THEME_DESCRIPTOR = msg({
 	message: 'Use the desktop app theme for this account',
 	comment:
@@ -33,4 +43,10 @@ export const THEME_SAVED_DESCRIPTOR = msg({
 export const TRY_A_DIFFERENT_NAME_OR_CLEAR_THE_SEARCH_DESCRIPTOR = msg({
 	message: 'Try a different name or clear the search.',
 	comment: 'Empty search result description in Settings > Themes.',
+});
+export const TRUSTED_SITE_WARNING_DESCRIPTOR = msg({
+	message:
+		"Only trust sites you know. A site you trust can see your IP address, when you have Fluxer open and some of what's on your screen.",
+	comment:
+		'Warning in Settings > Themes and in the modal that applies a shared theme. Trusting a site lets quick CSS and themes load images from it, and CSS can make the browser load different images depending on what the app shows.',
 });

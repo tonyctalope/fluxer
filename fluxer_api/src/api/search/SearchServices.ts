@@ -25,6 +25,7 @@ import {
 import {convertToSearchableReport} from '@app/api/search/report/ReportSearchSerializer';
 import {SearchAdapterServiceBase} from '@app/api/search/SearchAdapterServiceBase';
 import {convertToSearchableUser} from '@app/api/search/user/UserSearchSerializer';
+import {isDeletionComplete} from '@app/api/user/UserHelpers';
 import type {
 	ISearchAdapter,
 	SearchOptions as SchemaSearchOptions,
@@ -178,15 +179,24 @@ export class UserSearchService
 	implements IUserSearchService
 {
 	async indexUser(user: User): Promise<void> {
+		if (isDeletionComplete(user)) {
+			await this.deleteDocument(user.id.toString());
+			return;
+		}
 		await this.indexDocument(convertToSearchableUser(user));
 	}
 
 	async indexUsers(users: Array<User>): Promise<void> {
-		if (users.length === 0) return;
-		await this.indexDocuments(users.map(convertToSearchableUser));
+		const listed = users.filter((user) => !isDeletionComplete(user));
+		if (listed.length === 0) return;
+		await this.indexDocuments(listed.map(convertToSearchableUser));
 	}
 
 	async updateUser(user: User): Promise<void> {
+		if (isDeletionComplete(user)) {
+			await this.deleteDocument(user.id.toString());
+			return;
+		}
 		await this.updateDocument(convertToSearchableUser(user));
 	}
 
@@ -236,10 +246,6 @@ export class ReportSearchService
 		},
 	): Promise<SchemaSearchResult<SearchableReport>> {
 		return this.search(query, filters, options);
-	}
-
-	listReportsByStatus(status: number, limit?: number, offset?: number): Promise<SchemaSearchResult<SearchableReport>> {
-		return this.searchReports('', {status}, {limit, offset});
 	}
 }
 

@@ -8,6 +8,13 @@ export const EMAIL_I18N_MESSAGES = {
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because the deletion of your {product_name} account was canceled.',
 	},
+	account_deletion_completed: {
+		subject: 'Your {product_name} account has been deleted',
+		intro: "We've deleted your {product_name} account, as you asked.",
+		note: 'Your messages were deleted or unlinked from you, depending on what you chose. If you want to use {product_name} again, you can create a new account.',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because you asked to delete your {product_name} account.',
+	},
 	account_deletion_scheduled_inactivity: {
 		subject: 'Your inactive {product_name} account will be deleted',
 		intro: "Your {product_name} account has been inactive for a long time, so we'll delete it on {deletion_date}.",
@@ -30,31 +37,136 @@ export const EMAIL_I18N_MESSAGES = {
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because a message deletion was requested for your {product_name} account.',
 	},
+	donation_cancellation_confirmation: {
+		subject: "We've received your {product_name} donation cancellation",
+		heading: 'Cancellation received',
+		preheader: 'Your recurring donation ends on {endsAt, date, long}',
+		intro: 'We received your request to cancel your recurring donation to {product_name} on {receivedFormatted}.',
+		ends_line: 'Your recurring donation ends on {endsAt, date, long}.',
+		charge_line_v2: "We won't charge you again.",
+		cta: 'Manage your donation',
+		reference_line: 'Reference: {reference}',
+		seller: 'Seller: Fluxer Platform AB, 559537-3993, {sellerAddress}, <mail>{sellerEmail}</mail>',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because you canceled your recurring donation to {product_name}.',
+	},
+	donation_card_expiring: {
+		subject: 'Your card expires before your next {product_name} donation payment',
+		heading: 'Update your card',
+		preheader:
+			'{branded, select, yes {Your {brand} ending in {last4}} other {Your card ending in {last4}}} expires soon',
+		intro:
+			'{branded, select, yes {Your {brand} ending in {last4}} other {Your card ending in {last4}}} expires at the end of {expiryFormatted}. Your next payment of {tax, select, yes {{amountFormatted}} other {{amountFormatted}, plus any tax that applies,}} is due on {chargeAt, date, long}.',
+		lead: 'Update your card before then so your donation keeps going.',
+		cta: 'Update your payment method',
+		seller: 'Seller: Fluxer Platform AB, 559537-3993, {sellerAddress}, <mail>{sellerEmail}</mail>',
+		signoff: 'The {product_name} team',
+		footer_reason:
+			'You received this email because a card you use for your donation to {product_name} is about to expire.',
+	},
 	donation_confirmation: {
 		subject: 'Thank you for your {product_name} donation',
 		intro:
 			'{interval, select, month {Your monthly donation to {product_name} is set up.} year {Your yearly donation to {product_name} is set up.} other {We received your donation to {product_name}.}}',
+		document_attached: 'Your donation receipt {documentNumber} is attached to this email as a PDF.',
 		amount_label: 'Amount',
 		currency_label: 'Currency',
 		amount_value: '{interval, select, month {{amount} a month} year {{amount} a year} other {{amount}}}',
-		lead: 'Stripe emails you a separate receipt with your invoice.',
+		date_label: 'Payment date',
+		date_value: '{paidAt, date, long}',
+		reference_label: 'Reference',
+		lead: '{interval, select, month {We email you a receipt for each payment.} year {We email you a receipt for each payment.} other {This email is your receipt.}}',
 		cta: '{interval, select, month {Manage or cancel} year {Manage or cancel} other {Manage donations}}',
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because you donated to {product_name} with this email address.',
 	},
 	donation_magic_link: {
 		subject: 'Manage your {product_name} donations',
-		intro: 'Use this link to manage your donations and download your invoices.',
+		intro: 'Use this link to manage or cancel a recurring donation and update your payment method.',
 		cta: 'Manage donations',
 		expiry: 'This link expires in {minutes, plural, one {# minute} other {# minutes}}.',
 		note: "If you didn't ask for this link, you can ignore this email.",
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because a donor portal link was requested for this email address.',
 	},
+	donation_payment_failed: {
+		subject:
+			"{reason, select, action_required {Confirm your {product_name} donation payment} other {Your {product_name} donation payment didn't go through}}",
+		heading:
+			"{reason, select, action_required {Your bank needs you to confirm a payment} other {Your donation payment didn't go through}}",
+		preheader:
+			"{reason, select, action_required {Confirm {amountFormatted} for your donation} other {We couldn't charge {amountFormatted} for your donation}}",
+		intro:
+			"{reason, select, action_required {Your bank wants you to confirm the next payment of your recurring donation to {product_name}.} other {We couldn't charge the next payment of your recurring donation to {product_name}.}}",
+		date_label: 'Payment attempted',
+		date_value: '{attemptedAt, date, long}',
+		amount_label: 'Amount',
+		lead: 'To change your payment method or stop the donation, go to your donations.',
+		manage_link: 'Manage your donations',
+		note: '{reply, select, yes {If you need help, reply to this email.} other {If you need help, contact the admins of this instance.}}',
+		signoff: 'The {product_name} team',
+		footer_reason:
+			'You received this email because a payment for your recurring donation to {product_name} needs your attention.',
+		reminder_subject: 'Reminder to confirm your donation payment',
+	},
+	donation_receipt: {
+		subject: 'Your {product_name} donation receipt',
+		heading: 'Receipt for your donation',
+		preheader: '{amountFormatted} donated to {product_name}',
+		intro:
+			'{document, select, yes {{interval, select, year {Thank you for your yearly donation.} other {Thank you for your monthly donation.}}} other {{interval, select, year {Thank you for your yearly donation. This email is your receipt.} other {Thank you for your monthly donation. This email is your receipt.}}}}',
+		document_attached: 'Your donation receipt {documentNumber} is attached to this email as a PDF.',
+		date_label: 'Payment date',
+		date_value: '{paidAt, date, long}',
+		period_label: 'Period',
+		period_value: '{periodStart, date, long} to\n{periodEnd, date, long}',
+		total_label: 'Total',
+		manage_link: 'Manage your donations',
+		signoff: 'The {product_name} team',
+		footer_reason:
+			'{interval, select, year {You received this email because you donate to {product_name} every year.} other {You received this email because you donate to {product_name} every month.}}',
+	},
+	donation_refund_receipt: {
+		subject: 'Your {product_name} donation refund',
+		heading: 'Refund of {amountFormatted}',
+		preheader: '{amountFormatted} of your donation refunded',
+		intro:
+			'We refunded {amountFormatted} of your donation to the card or account you paid with. It usually takes 5 to 10 business days to show up, depending on your bank.',
+		reference_label: 'Reference',
+		date_label: 'Refund date',
+		date_value: '{refundedAt, date, long}',
+		refund_label: 'Refunded',
+		refund_note_label: 'Refund note number',
+		refund_note_attached: 'The refund note for this refund is attached to this email as a PDF.',
+		note: '{reply, select, yes {Questions about this refund? Reply to this email.} other {If you have questions about this refund, contact the admins of this instance.}}',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because a donation to {product_name} was refunded.',
+	},
+	donation_renewal_notice: {
+		subject: 'Your yearly donation to {product_name} renews on {chargeAt, date, long}',
+		heading: 'Your donation renews soon',
+		preheader: 'Your yearly donation renews on {chargeAt, date, long}',
+		intro:
+			'Your yearly donation to {product_name} renews automatically on {chargeAt, date, long} unless you cancel before then.',
+		charge_line:
+			"{method, select, card {On {chargeAt, date, long} we'll charge {tax, select, yes {{nextFormatted}} other {{nextFormatted}, plus any tax that applies,}} to your {brand} ending in {last4}.} plain_card {On {chargeAt, date, long} we'll charge {tax, select, yes {{nextFormatted}} other {{nextFormatted}, plus any tax that applies,}} to your card ending in {last4}.} named {On {chargeAt, date, long} we'll charge {tax, select, yes {{nextFormatted}} other {{nextFormatted}, plus any tax that applies,}} using {methodName}.} other {On {chargeAt, date, long} we'll charge {tax, select, yes {{nextFormatted}} other {{nextFormatted}, plus any tax that applies,}} to your saved payment method.}}",
+		after_line:
+			'{differs, select, yes {After that, the price is {tax, select, yes {{regularFormatted}} other {{regularFormatted}, plus any tax that applies,}} every year.} other {After that, you pay {tax, select, yes {{regularFormatted}} other {{regularFormatted}, plus any tax that applies,}} every year until you cancel.}}',
+		box: 'To stop the renewal, cancel before {cancelByFormatted}.',
+		cta: 'Manage your donation',
+		keep_line: "If you cancel, we won't charge you again.",
+		seller: 'Seller: Fluxer Platform AB, 559537-3993, {sellerAddress}, <mail>{sellerEmail}</mail>',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because your yearly donation to {product_name} renews automatically.',
+	},
 	dsa_report_resolved: {
 		subject: 'We made a decision on your {product_name} report',
 		intro:
-			"{outcome, select, removed {We removed the content you reported because it broke our rules.} restricted {The account you reported broke our rules, and we restricted it. We don't share what we did to another person's account.} action_taken {What you reported broke our rules, and we took action. We don't share what we did to another person's account.} no_violation {What you reported doesn't break our rules, so we left it as it is.} other {We closed your report.}}",
+			"{outcome, select, removed {We removed the content you reported because it broke our rules.} restricted {The account you reported broke our rules, and we took action on it. We don't share which action we took.} action_taken {What you reported broke our rules, and we took action. We don't share which action we took.} no_violation {What you reported doesn't break our rules, so we left it as it is.} other {We closed your report.}}",
+		about:
+			'{target, select, message_community {This is about your report on a message in #{channelName} in "{communityName}", sent on {reportedAt, date, long}.} message_dm {This is about your report on a message in a direct message, sent on {reportedAt, date, long}.} message {This is about your report on a message, sent on {reportedAt, date, long}.} user {This is about your report on the account "{username}", sent on {reportedAt, date, long}.} community {This is about your report on the community "{communityName}", sent on {reportedAt, date, long}.} other {This is about the report you sent on {reportedAt, date, long}.}}',
+		thanks:
+			'{outcome, select, removed {Thanks for reporting it. Reports like yours help keep {product_name} safe for everyone.} restricted {Thanks for reporting it. Reports like yours help keep {product_name} safe for everyone.} action_taken {Thanks for reporting it. Reports like yours help keep {product_name} safe for everyone.} other {Thanks for letting us know.}}',
 		report_label: 'Report ID',
 		comment_label: 'Note from our team',
 		note: '{reply, select, yes {If you disagree, reply to this email within 60 days.} other {{appeals_email, select, null {} other {If you disagree, email <mail>{appeals_email}</mail> within 60 days and include the report ID.}}}}{appeals_email, select, null {} other { In the EU, you can also go to a certified <dsa>out-of-court dispute settlement body</dsa> or complain to the Digital Services Coordinator in your country.}}',
@@ -151,6 +263,9 @@ export const EMAIL_I18N_MESSAGES = {
 		note: '{reply, select, yes {If you think this is a mistake, reply to this email and tell us what you know about the gift code.} other {If you think this is a mistake, contact the admins of this instance and tell them what you know about the gift code.}}',
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because perks were removed from your {product_name} account.',
+		billing_resumed:
+			'Because the gift was removed, your {plan, select, yearly {yearly} other {monthly}} {premiumName} subscription is billed again from today. You\'ll get a separate receipt for the charge. You can cancel any time under "Manage subscription".',
+		manage_cta: 'Manage your subscription',
 	},
 	harvest_completed: {
 		subject: 'Your {product_name} data export is ready',
@@ -199,7 +314,7 @@ export const EMAIL_I18N_MESSAGES = {
 	operator_pass_offer_accepted: {
 		subject: '{recipientName} accepted your {product_name} Operator Pass',
 		intro: "{recipientName} accepted the Operator Pass you passed on, and it's on their account.",
-		note: '{remainingCount, plural, =0 {You have no Operator Passes left, so your badge and wall listing are gone.} =1 {You have # Operator Pass left.} other {You have # Operator Passes left.}}',
+		note: "{remainingCount, plural, =0 {{visionary, select, yes {You have no Operator Passes left, so your badge and wall listing are gone. You keep '#'operators through your Visionary.} other {You have no Operator Passes left, so your badge, wall listing and '#'operators are gone.}}} =1 {You have # Operator Pass left.} other {You have # Operator Passes left.}}",
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because you passed on an Operator Pass on {product_name}.',
 	},
@@ -207,42 +322,47 @@ export const EMAIL_I18N_MESSAGES = {
 		subject:
 			'{ended, select, withdrawn {An Operator Pass offer was taken back} declined {Your Operator Pass offer was declined} other {An Operator Pass offer was canceled}}',
 		intro:
-			"{ended, select, withdrawn {{otherName} took back their Operator Pass offer.} declined {{otherName} declined your Operator Pass. It's still yours, and you can offer it to someone else.} other {The Operator Pass offer with {otherName} was canceled because the pass or its payment changed.}}",
+			"{ended, select, withdrawn {{otherName} took back their Operator Pass offer.} declined {{otherName} declined your Operator Pass. It's still yours, and you can offer it to someone else.} unavailable {{otherName} can't receive the Operator Pass you offered anymore, so we canceled the offer. It's still yours, and you can offer it to someone else.} other {The Operator Pass offer with {otherName} was canceled because the pass or its payment changed.}}",
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because of an Operator Pass offer on {product_name}.',
 	},
 	operator_pass_offer_received: {
 		subject: '{senderName} wants to pass you an Operator Pass',
 		intro: '{senderName} wants to pass you one of their Operator Passes.',
-		lead: 'Accept or decline it in {product_name}. If you accept, it arrives on {arrivesAt, date, long}.',
+		lead_v2: 'Accept or decline it in {product_name}. If you accept, it moves to you right away.',
 		cta: 'View the offer',
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because someone offered you an Operator Pass on {product_name}.',
 	},
 	operator_pass_perks_removed: {
-		subject: 'We removed your {product_name} Operator Pass benefits',
+		subject: 'We removed what comes with your {product_name} Operator Pass',
 		intro:
-			"{scope, select, permanent {We removed your Operator Pass benefits permanently.} other {We removed your Operator Pass benefits until {until, date, long}, when they come back with your original badge date.}} This includes your wall listing, badge, #operators and the Operator role. Your {product_name} account isn't suspended.",
+			"{scope, select, permanent {We permanently removed what comes with your Operator Pass.} other {We removed what comes with your Operator Pass until {until, date, long}, when it comes back with your original badge date.}} {visionary, select, yes {This includes your wall listing, badge and the Operator role. You keep #operators through your Visionary.} other {This includes your wall listing, badge, #operators and the Operator role.}} {cause, select, dispute {The certificate pages that payment paid for are canceled and can't be downloaded anymore, and your {product_name} account isn't suspended.} other {Your Operator certificate isn't affected, and your {product_name} account isn't suspended.}}",
 		rule_label: 'Rule',
 		facts_label: 'Facts we relied on',
+		dispute_rule: 'Section 9 of the Operator Pass terms',
+		dispute_facts:
+			"We found payment dispute {disputeId} unjustified, told you why and gave you until {deadline, date, long} to withdraw it, and the dispute ended with the payment returned to you by your bank. The passes that payment paid for have ended, and this account can't buy or receive a pass again.",
 		ground_label: 'Ground',
 		ground: 'Section 8 of the Operator Pass terms',
 		automated_text:
-			'{automated, select, yes {Automated tools helped us find this. A person on our team made the decision.} other {A person on our team made the decision without automated tools.}}',
+			"{automated, select, yes {Automated tools helped us find this. A person on our team made the decision.} other {Automated detection didn't find this, and a person on our team made the decision.}}",
 		refund:
-			"{scope, select, permanent {You can't buy or receive the Operator Pass again while this decision stands. } other {}}Removed benefits aren't refunded. If you still have a right of withdrawal, this decision doesn't take it away.",
+			"{scope, select, permanent {You can't buy or receive the Operator Pass again while this decision stands. } other {}}{cause, select, dispute {We give no refund for this removal, because your bank has already returned the payment to you.} other {We give no refund for this removal, because the price of a pass pays only for its Operator certificate, and removing what comes with the pass doesn't cancel it.}} If you can still withdraw from your purchase, this decision doesn't take that away.",
 		appeal_title: 'How to appeal',
-		appeal_body:
-			"{reply, select, yes {Reply to this email within 60 days and tell us why you disagree.} other {Contact the admins of this instance within 60 days and tell them why you disagree.}} It's free, and someone who didn't make this decision reviews it.",
-		redress:
-			"You can also use a certified <dsa>out-of-court dispute settlement body</dsa> or go to court. If you're a consumer, you can take the dispute to the Swedish National Board for Consumer Disputes (<arn>ARN</arn>), and we take part.",
+		appeal_body_v2:
+			"{reply, select, yes {Reply to this email within 60 days and tell us why you disagree. It's free, and a person on our team reads and decides your appeal.} other {Contact the admins of this instance within 60 days and tell them why you disagree.}}",
+		redress_v2:
+			"You can also go to court. If you're in the EU, you can use a certified <dsa>out-of-court dispute settlement body</dsa>. If you're a consumer in the EU or the EEA, you can also take the dispute to the Swedish National Board for Consumer Disputes (<arn>ARN</arn>), Box 174, 101 23 Stockholm, Sweden.",
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because of an Operator Pass decision on your {product_name} account.',
 	},
 	operator_pass_purchase_confirmation: {
 		subject: 'Your {product_name} Operator Pass receipt',
 		intro:
-			'Thank you for your order. This email is your receipt, and the Operator Pass terms you accepted (version {termsVersion}) are attached as a PDF.',
+			'{document, select, yes {Thank you for your order. The Operator Pass terms you accepted (version {termsVersion}) are attached as a PDF.} other {Thank you for your order. This email is your receipt, and the Operator Pass terms you accepted (version {termsVersion}) are attached as a PDF.}}',
+		document_attached:
+			'{business, select, yes {Your invoice {documentNumber} is attached to this email as a PDF.} other {Your receipt {documentNumber} is attached to this email as a PDF.}}',
 		order_number_label: 'Order number',
 		order_date_label: 'Order date',
 		order_date_value: '{orderDate, date, long}',
@@ -252,156 +372,200 @@ export const EMAIL_I18N_MESSAGES = {
 		price_label: 'Total',
 		currency_label: 'Currency',
 		price_value: '{priceFormatted}, paid once',
+		tax_included: 'Includes {taxFormatted} tax',
+		tax_added: '{taxFormatted} tax added to the price',
+		reverse_charge: 'No VAT was charged because reverse charge applies. The invoice has the details.',
 		payment_label: 'Payment',
-		included_heading: 'What you get',
-		included_perks:
-			"A spot on the Operators' wall, whenever you want it, and the Operator badge, for life, as long as we run {product_name}.",
-		included_pass_on: 'Each pass can be passed on once.',
-		bonus_heading: 'Bonus',
-		bonus_line:
-			"While we run it, you also get the Operator role and #operators in Fluxer Labs. The bonus isn't part of the price and can change or end.",
-		consent_heading: 'Your consent',
-		consent_line: 'At checkout on {waiverConsentAt, date, long}, you checked the box "{consentText}"',
+		paid_for_heading: '{quantity, plural, =1 {Your Operator certificate} other {Your Operator certificates}}',
+		paid_for_v2:
+			'{quantity, plural, =1 {Right after this email, we make your numbered Operator certificate available to download in your <settings>settings</settings> and email you a copy.} other {Right after this email, we make your numbered Operator certificates available to download in your <settings>settings</settings> and email you a copy.}}',
+		bonus_heading: 'Also with your pass',
+		bonus_line_v2:
+			"The Operator badge, a spot on the Operators' wall, #operators in {labs_name} and more come with the pass.",
+		boxes_heading: 'What you agreed to',
+		delivery_box:
+			'At checkout on {consentAt, date, long} at {consentAt, time, short}, you checked this box under version {termsVersion} of the terms.',
 		withdrawal_heading: 'Right of withdrawal',
-		withdrawal_waived:
-			'{quantity, plural, =1 {Your right of withdrawal ended when we delivered your pass, as you asked.} other {Your right of withdrawal ended when we delivered your passes, as you asked.}}',
-		withdrawal_cancel_until:
-			'{quantity, plural, =1 {You can cancel until {withdrawalEndsOn, date, long} for a full refund.} other {You can cancel each pass until {withdrawalEndsOn, date, long} for a full refund.}} Use Cancel next to the pass in your <settings>settings</settings>.',
-		withdrawal_rule_cancel_until:
-			'{quantity, plural, =1 {A rule for your country replaces the box you checked, so you can still cancel until {withdrawalEndsOn, date, long} for a full refund.} other {A rule for your country replaces the box you checked, so you can still cancel each pass until {withdrawalEndsOn, date, long} for a full refund.}} Use Cancel next to the pass in your <settings>settings</settings>.',
-		seller: 'Seller: Fluxer Platform AB, 559537-3993, <mail>{sellerEmail}</mail>',
+		withdrawal_waiver:
+			"{quantity, plural, =1 {At checkout you asked us to deliver your certificate right away, and you confirmed that you lose your right of withdrawal once it's delivered. We deliver it right after we send this email, so from then on you can't withdraw from the purchase. If the certificate isn't delivered or has a fault, the law still protects you.} other {At checkout you asked us to deliver your certificates right away, and you confirmed that you lose your right of withdrawal once they're delivered. We deliver them right after we send this email, so from then on you can't withdraw from the purchase. If a certificate isn't delivered or has a fault, the law still protects you.}}",
+		withdrawal_country_v4:
+			'{quantity, plural, =1 {At checkout you asked us to deliver your certificate right away. Section 12 of the terms applies to your purchase, so you can withdraw until {withdrawalEndsOn, date, long} and get a full refund, even after delivery. Use "Withdraw from contract here" next to the purchase in your <settings>settings</settings>.} other {At checkout you asked us to deliver your certificates right away. Section 12 of the terms applies to your purchase, so you can withdraw until {withdrawalEndsOn, date, long} and get a full refund, even after delivery. Use "Withdraw from contract here" next to the purchase in your <settings>settings</settings>.}}',
+		seller:
+			'Seller: Fluxer Platform AB, 559537-3993, registered office (säte) Haninge, Sweden, {sellerAddress}, {sellerPhone}, <mail>{sellerEmail}</mail>',
 		terms_link: 'Operator Pass terms',
-		wall_status:
-			"{wallOptOut, select, yes {You chose not to be listed. You can add your name to the wall anytime in your <settings>settings</settings>.} other {You're listed as {wallName}. You can change it or leave the wall in your <settings>settings</settings>.}}",
+		wall_status_v2:
+			"{wallOptOut, select, yes {You chose not to be listed on the Operators' wall. You can add your name in your <settings>settings</settings>.} other {You're listed on the Operators' wall as {wallName}. You can change it or leave the wall in your <settings>settings</settings>.}}",
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because you bought an Operator Pass on {product_name}.',
 	},
-	operator_pass_removal_notice: {
-		subject: 'We intend to remove your {product_name} Operator Pass',
+	operator_pass_refund_receipt: {
+		subject: 'Your {product_name} Operator Pass refund',
+		heading: 'Refund of {amountFormatted}',
+		preheader: '{amountFormatted} refunded for your Operator Pass',
 		intro:
-			'We intend to remove your Operator Pass permanently. You have {replyDays, plural, one {# day} other {# days}} to reply before we decide.',
+			'We refunded {amountFormatted} for your Operator Pass purchase to the card or account you paid with. It usually takes 5 to 10 business days to show up, depending on your bank.',
+		order_number_label: 'Order number',
+		order_date_label: 'Order date',
+		order_date_value: '{orderDate, date, long}',
+		date_label: 'Refund date',
+		date_value: '{refundedAt, date, long}',
+		refund_label: 'Refunded',
+		credit_note_label: 'Credit note number',
+		lead: "{delivered, select, no {{passCount, plural, one {We hadn't delivered your certificate yet, so nothing else on your account changes.} other {We hadn't delivered your certificates yet, so nothing else on your account changes.}}} other {{passCount, plural, =0 {This refund didn't end any of your passes, so nothing else on your account changes.} other {{passCount, plural, one {The pass has ended.} other {# passes have ended.}} {lastPass, select, yes {{visionary, select, yes {Your badge and wall listing have ended too. You keep '#'operators through your Visionary.} other {Your badge, wall listing and '#'operators have ended too.}}} other {Your other passes stay.}}}}}}",
+		credit_note_attached: 'The credit note for this refund is attached to this email as a PDF.',
+		note: '{reply, select, yes {Questions about this refund? Reply to this email.} other {If you have questions about this refund, contact the admins of this instance.}}',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because an Operator Pass payment on {product_name} was refunded.',
+	},
+	operator_pass_removal_notice: {
+		subject: 'We intend to remove what comes with your {product_name} Operator Pass',
+		intro:
+			'We intend to permanently remove what comes with your Operator Pass. You have {replyDays, plural, one {# day} other {# days}} to reply before we decide.',
 		rule_label: 'Rule',
 		facts_label: 'Facts we relied on',
 		ground_label: 'Ground',
 		ground: 'Section 8 of the Operator Pass terms',
 		reply:
-			'{reply, select, yes {Reply to this email and tell us anything we should know.} other {Contact the admins of this instance and tell them anything we should know.}} A person on our team reads every reply before we decide. Until then, your wall listing, badge, #operators and the Operator role stay as they are.',
-		next: "If we go ahead, we email you the decision and how to appeal it. If you're a consumer, you can also take a dispute about a removal to the Swedish National Board for Consumer Disputes (<arn>ARN</arn>), and we take part.",
+			'{reply, select, yes {Reply to this email and tell us anything we should know.} other {Contact the admins of this instance and tell them anything we should know.}} A person on our team reads every reply before we decide. {visionary, select, yes {Until then, your wall listing, badge and the Operator role stay as they are. You keep #operators through your Visionary.} other {Until then, your wall listing, badge, #operators and the Operator role stay as they are.}}',
+		next_v2:
+			"If we go ahead, we email you the decision and how to appeal it. If you're a consumer in the EU or the EEA, you can also take a dispute about a removal to the Swedish National Board for Consumer Disputes (<arn>ARN</arn>), Box 174, 101 23 Stockholm, Sweden.",
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because of an Operator Pass decision on your {product_name} account.',
 	},
 	operator_pass_revoked: {
 		subject: 'An Operator Pass on your {product_name} account has ended',
 		intro:
-			"{cause, select, dispute {The payment for an Operator Pass you received was reversed in a payment dispute, so the pass has ended.} withdrawal {The person who bought an Operator Pass you received withdrew from the purchase, so the pass has ended.} other {The payment for an Operator Pass you received was refunded, so the pass has ended.}} This isn't about anything you did.",
-		note: '{lastPass, select, yes {It was your last pass, so your badge and wall listing are gone.} other {Your other passes stay.}}',
+			"{cause, select, dispute {The payment for an Operator Pass you received was reversed in a payment dispute, so the pass has ended. This isn't about anything you did.} withdrawal {The person who bought an Operator Pass you received withdrew from the purchase, so the pass has ended. This isn't about anything you did.} visionary {Your Visionary ended, so the Operator Pass that came with it ended too. Our records show its certificate as canceled.} other {The payment for an Operator Pass you received was refunded, so the pass has ended. This isn't about anything you did.}}",
+		note: '{lastPass, select, yes {{visionary, select, yes {It was your last pass, so your badge and wall listing are gone. You keep #operators through your Visionary.} other {It was your last pass, so your badge, wall listing and #operators are gone.}}} other {Your other passes stay.}}',
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because an Operator Pass on your {product_name} account ended.',
 	},
-	operator_pass_sale_open: {
-		subject: 'The {product_name} Operator Pass is on sale',
-		intro: "You asked us to tell you when the Operator Pass goes on sale. It's on sale now.",
-		price_label: 'Early bird price',
-		price_value: '{priceFormatted}, paid once, until {priceEndsOn, date, long}',
-		included_perks:
-			"A spot on the Operators' wall, whenever you want it, and the Operator badge, for life, as long as we run {product_name}.",
-		included_bonus:
-			"While we run it, you also get the Operator role and #operators in Fluxer Labs. The bonus isn't part of the price.",
-		cta: 'Get the Operator Pass',
-		terms_link: 'Operator Pass terms',
-		signoff: 'The {product_name} team',
-		footer_reason:
-			'You received this email because you joined the Operator Pass waitlist. This is the last email we send about the pass.',
-		unsubscribe: 'Unsubscribe',
-	},
-	operator_pass_waitlist_verification: {
-		subject: 'Confirm your {product_name} Operator Pass waitlist signup',
+	operator_pass_purchase_refused: {
+		subject: 'We refunded your {product_name} Operator Pass payment',
 		intro:
-			"Confirm this email address to join the Operator Pass waitlist. We'll email you once, when the pass goes on sale.",
-		cta: 'Join the waitlist',
-		expiry: 'This link expires in 48 hours.',
-		note: "If you didn't ask for this, ignore this email and we won't contact you again.",
+			"We couldn't save the details of your purchase, so we didn't create your certificate and refunded the whole payment to the payment method you used. You can buy the Operator Pass again.",
+		note: 'Your bank usually shows the refund within 5 to 10 business days. Nothing else on your account changes.',
+		credit_note_label: 'Credit note number',
+		credit_note_attached: 'The credit note for this refund is attached to this email as a PDF.',
 		signoff: 'The {product_name} team',
-		footer_reason:
-			'You received this email because this address was entered on the Operator Pass waitlist on the {product_name} website.',
+		footer_reason: 'You received this email because you paid for an Operator Pass on your {product_name} account.',
 	},
 	operator_pass_wall_hidden: {
 		subject: "We took your listing off the {product_name} Operators' wall for now",
 		intro:
-			"We took your listing off the Operators' wall for now. Your passes and badge stay, and nothing is withdrawn or refunded.",
+			"We took your listing off the Operators' wall for now. Your passes, your badge and your purchase stay as they are.",
 		reason_label: 'Reason',
 		reason_value:
 			'{reason, select, impersonation {Pretends to be someone else} rights {Uses a name or image without the rights to it} age_suitability {Not suitable for younger users} other {Breaks the community guidelines}}',
 		facts_label: 'Facts we relied on',
 		ground_label: 'Ground',
-		ground: 'Section 8 of the Operator Pass terms',
-		automated_text: 'A person on our team made the decision without automated tools.',
+		ground: 'Section 3.1 of the Operator Pass terms',
+		automated_text: "Automated detection didn't find this, and a person on our team made the decision.",
 		next: 'Your listing comes back at its size and place if we show it again or your appeal succeeds.',
 		appeal_title: 'How to appeal',
-		appeal_body:
-			"{reply, select, yes {Reply to this email within 60 days and tell us why you disagree.} other {Contact the admins of this instance within 60 days and tell them why you disagree.}} It's free, and someone who didn't make this decision reviews it.",
-		redress:
-			"You can also use a certified <dsa>out-of-court dispute settlement body</dsa> or go to court. If you're a consumer, you can take the dispute to the Swedish National Board for Consumer Disputes (<arn>ARN</arn>), and we take part.",
+		appeal_body_v2:
+			"{reply, select, yes {Reply to this email within 60 days and tell us why you disagree. It's free, and a person on our team reads and decides your appeal.} other {Contact the admins of this instance within 60 days and tell them why you disagree.}}",
+		redress_v2:
+			"You can also go to court. If you're in the EU, you can use a certified <dsa>out-of-court dispute settlement body</dsa>. If you're a consumer in the EU or the EEA, you can also take the dispute to the Swedish National Board for Consumer Disputes (<arn>ARN</arn>), Box 174, 101 23 Stockholm, Sweden.",
 		signoff: 'The {product_name} team',
 		footer_reason:
 			"You received this email because of a decision about your listing on the {product_name} Operators' wall.",
 	},
 	operator_pass_wall_name_replaced: {
-		subject: "We declined your name or avatar for the {product_name} Operators' wall",
+		subject: "We took your name or avatar off the {product_name} Operators' wall",
 		intro:
-			"{target, select, avatar {We declined your avatar for the Operators' wall.} both {We declined your name and avatar for the Operators' wall.} other {We declined your name for the Operators' wall.}} {shown, select, previous {The wall keeps your last approved version.} username {Until you send a new one, the wall shows your username and the default avatar.} other {Until you send a new one, the wall shows the word Operator and the default avatar.}} You keep your spot, size and badge, and nothing is withdrawn or refunded.",
+			"{target, select, avatar {We took your avatar off the Operators' wall.} both {We took your name and avatar off the Operators' wall.} other {We took your name off the Operators' wall.}} {shown, select, previous {The wall shows your earlier name and avatar.} other {Until you send a new one, the wall shows the word Operator and the default avatar.}} Your spot on the wall, its size and your badge stay as they are, and your purchase isn't affected.",
 		reason_label: 'Reason',
 		reason_value:
 			'{reason, select, impersonation {Pretends to be someone else} rights {Uses a name or image without the rights to it} age_suitability {Not suitable for younger users} other {Breaks the community guidelines}}',
 		facts_label: 'Facts we relied on',
 		ground_label: 'Ground',
-		ground: 'Section 2.1 of the Operator Pass terms',
-		automated_text: 'A person on our team made the decision without automated tools.',
-		next: 'You can send a new name or avatar anytime in your <settings>settings</settings>.',
+		ground: 'Section 3.1 of the Operator Pass terms',
+		automated_text: "Automated detection didn't find this, and a person on our team made the decision.",
+		next: 'You can send a new name or avatar in your <settings>settings</settings>.',
 		appeal_title: 'How to appeal',
-		appeal_body:
-			"{reply, select, yes {Reply to this email within 60 days and tell us why you disagree.} other {Contact the admins of this instance within 60 days and tell them why you disagree.}} It's free, and someone who didn't make this decision reviews it.",
-		redress:
-			"You can also use a certified <dsa>out-of-court dispute settlement body</dsa> or go to court. If you're a consumer, you can take the dispute to the Swedish National Board for Consumer Disputes (<arn>ARN</arn>), and we take part.",
+		appeal_body_v2:
+			"{reply, select, yes {Reply to this email within 60 days and tell us why you disagree. It's free, and a person on our team reads and decides your appeal.} other {Contact the admins of this instance within 60 days and tell them why you disagree.}}",
+		redress_v2:
+			"You can also go to court. If you're in the EU, you can use a certified <dsa>out-of-court dispute settlement body</dsa>. If you're a consumer in the EU or the EEA, you can also take the dispute to the Swedish National Board for Consumer Disputes (<arn>ARN</arn>), Box 174, 101 23 Stockholm, Sweden.",
 		signoff: 'The {product_name} team',
 		footer_reason:
 			"You received this email because of a decision about your listing on the {product_name} Operators' wall.",
 	},
+	operator_pass_wall_quote_cleared: {
+		subject: "We removed your quote from the {product_name} Operators' wall",
+		intro:
+			"We removed the quote from your listing on the Operators' wall. The rest of your listing stays as it is, and your badge and your purchase aren't affected.",
+		reason_label: 'Reason',
+		reason_value:
+			"{reason, select, impersonation {Pretends to be someone else} rights {Uses someone else's text without the rights to it} age_suitability {Not suitable for younger users} other {Breaks the community guidelines}}",
+		facts_label: 'Facts we relied on',
+		ground_label: 'Ground',
+		ground: 'Section 6.2 of the terms of service',
+		automated_text: "Automated detection didn't find this, and a person on our team made the decision.",
+		next: 'You can add a new quote that follows the community guidelines in your <settings>settings</settings>.',
+		appeal_title: 'How to appeal',
+		appeal_body_v2:
+			"{reply, select, yes {Reply to this email within 60 days and tell us why you disagree. It's free, and a person on our team reads and decides your appeal.} other {Contact the admins of this instance within 60 days and tell them why you disagree.}}",
+		redress_v2:
+			"You can also go to court. If you're in the EU, you can use a certified <dsa>out-of-court dispute settlement body</dsa>. If you're a consumer in the EU or the EEA, you can also take the dispute to the Swedish National Board for Consumer Disputes (<arn>ARN</arn>), Box 174, 101 23 Stockholm, Sweden.",
+		signoff: 'The {product_name} team',
+		footer_reason:
+			"You received this email because of a decision about your listing on the {product_name} Operators' wall.",
+	},
+	operator_pass_visionary_turned_on: {
+		subject: 'Your {product_name} Operator certificate',
+		intro:
+			'Your Operator Pass is on. Your certificate is attached, and you can download it again in your <settings>settings</settings>. Keep your own copy too, because we delete ours if your account is deleted.',
+		badge_line:
+			'{badge, select, yes {Your Operator badge is on your profile. You can hide it in your <settings>settings</settings>.} other {Your Operator badge is hidden. You can show it in your <settings>settings</settings>.}}',
+		wall_line:
+			"{wallOptOut, select, yes {You chose not to be listed on the Operators' wall. You can add your name in your <settings>settings</settings>.} other {You're listed on the Operators' wall as {wallName}. You can change it or leave the wall in your <settings>settings</settings>.}}",
+		labs_line:
+			'{member, select, yes {You have the Operator role in Fluxer Labs.} other {Your pass comes with the Operator role in Fluxer Labs. You have it whenever this account is in Fluxer Labs.}}',
+		cta: 'Open Fluxer Labs',
+		terms_attached: 'The Operator Pass terms you accepted (version {termsVersion}) are attached as a PDF.',
+		terms_link: 'Operator Pass terms',
+		signoff: 'The {product_name} team',
+		footer_reason:
+			'You received this email because you turned on the Operator Pass that comes with Visionary on your {product_name} account.',
+	},
 	operator_pass_welcome: {
-		subject: 'Your {product_name} Operator Pass is active',
-		intro: 'Your Operator Pass is active. Thank you for backing {product_name}.',
+		subject: 'Your {product_name} Operator certificate',
+		intro: 'Thank you for supporting {product_name}. Your Operator certificate is ready.',
 		order_number_label: 'Order number',
 		delivered_label: 'Delivered',
 		delivered_value: '{deliveredAt, date, long}',
 		pass_count_label: 'Operator Passes',
-		wall_line:
-			"{wallOptOut, select, yes {You chose not to be listed on the Operators' wall. You can add your name anytime in your <settings>settings</settings>.} other {You're listed on the Operators' wall as {wallName}, and your name and avatar show once we check them. You can change it or leave the wall in your <settings>settings</settings>.}}",
+		certificate_line:
+			'Your Operator certificate is attached to this email. You can download it again in your Fluxer settings. Keep your own copy too, because we delete ours if your account is deleted.',
+		bonus_heading: 'Also with your pass',
+		wall_line_v2:
+			"{wallOptOut, select, yes {You chose not to be listed on the Operators' wall. You can add your name in your <settings>settings</settings>.} other {You're listed on the Operators' wall as {wallName}. You can change it or leave the wall in your <settings>settings</settings>.}}",
 		badge_line: 'Your badge is on your profile. You can hide it in your <settings>settings</settings>.',
-		labs_line: 'In Fluxer Labs you get the Operator role and #operators. This bonus lasts while we run it.',
+		labs_line_v2:
+			'{labs, select, visionary {You have the Operator role in Fluxer Labs. You already have #operators through your Visionary.} member {You have the Operator role and #operators in Fluxer Labs.} other {Your pass comes with the Operator role and #operators in Fluxer Labs. You have them whenever this account is in Fluxer Labs.}}',
 		cta: 'Open Fluxer Labs',
 		terms_link: 'Operator Pass terms',
 		signoff: '{founderName} and the {product_name} team',
 		footer_reason: 'You received this email because an Operator Pass was added to your {product_name} account.',
 	},
 	operator_pass_withdrawal_receipt: {
-		subject:
-			'{cancellation, select, yes {Your {product_name} Operator Pass is canceled} other {We received your {product_name} Operator Pass withdrawal}}',
-		intro:
-			'{cancellation, select, yes {We received your cancellation on {receivedAt, date, long} at {receivedAt, time, short}.} other {We received your withdrawal on {receivedAt, date, long} at {receivedAt, time, short}.}}',
+		subject: 'We received your {product_name} Operator Pass withdrawal',
+		intro: 'We received your withdrawal on {receivedAt, date, long} at {receivedAt, time, short}.',
 		name_label: 'Name',
 		order_number_label: 'Order number',
 		order_date_label: 'Order date',
 		order_date_value: '{orderDate, date, long}',
 		refund_label: 'Refund',
 		currency_label: 'Currency',
+		credit_note_label: 'Credit note number',
 		refund:
-			'{refundViaDispute, select, yes {Your bank opened a payment dispute for this purchase first, so we accepted the dispute and your bank returns the full {amountFormatted} to you.} other {We started a full refund of {amountFormatted} to your payment method, and you get it within 14 days.}} {lastPass, select, yes {The pass has ended, and so have your badge, wall listing and the bonus.} other {The pass has ended. Your other passes stay.}}',
-		donation: 'The monthly donation you added at checkout is separate and keeps running. You can cancel it anytime.',
-		cta: 'Manage your donation',
-		note: 'Keep this email as your receipt.',
+			"{refund, select, dispute {Your bank opened a payment dispute for this purchase first, so we accepted the dispute and your bank returns the full {amountFormatted} to you.} already {We had already refunded {amountFormatted} for this purchase to your payment method, so no new refund was needed.} other {We started a full refund of {amountFormatted} to your payment method. Your bank usually shows it within 5 to 10 business days.}} {delivered, select, no {{passCount, plural, one {We hadn't delivered your certificate yet, so nothing else on your account changes.} other {We hadn't delivered your certificates yet, so nothing else on your account changes.}}} other {{passCount, plural, one {The pass has ended.} other {# passes have ended.}} {lastPass, select, yes {{visionary, select, yes {Your badge and wall listing have ended too. You keep #operators through your Visionary.} other {Your badge, wall listing and #operators have ended too.}}} other {Your other passes stay.}}}}",
+		credit_note_attached: 'The credit note for this refund is attached to this email as a PDF.',
+		note: 'Keep this email as confirmation that we received your withdrawal.',
 		signoff: 'The {product_name} team',
-		footer_reason:
-			'{cancellation, select, yes {You received this email because you canceled an Operator Pass purchase on {product_name}.} other {You received this email because you withdrew from an Operator Pass purchase on {product_name}.}}',
+		footer_reason: 'You received this email because you withdrew from an Operator Pass purchase on {product_name}.',
 	},
 	password_change_verification: {
 		subject: 'Confirm your {product_name} password change',
@@ -439,17 +603,212 @@ export const EMAIL_I18N_MESSAGES = {
 		deadline_value: '{warningDate, date, long}',
 		deadline_body:
 			"If the dispute isn't withdrawn before {warningDate, date, long} and it ends with the money returned to you, we'll permanently delete your {product_name} account. A deleted account can't be restored. If we close your account, you also can't create or use other {product_name} accounts.",
+		deadline_body_operator_pass:
+			"If the dispute isn't withdrawn before {warningDate, date, long} and it ends with the money returned to you, the passes that payment paid for end, and we remove what comes with the Operator Pass from your account for good. Your account then can't buy or receive a pass again. Nothing else on your account changes.",
 		why_title: 'Why we found it unjustified',
 		why_body:
-			'You or someone you allowed made the payment, we charged the right amount, {product, select, plutonium {Plutonium was provided as described} other {the Operator Pass was delivered as described}}, we had not refunded the payment, and the withdrawal period had ended when you disputed it.',
+			'You or someone you allowed made the payment, we charged the right amount, {product, select, plutonium {Plutonium was provided as described} other {we delivered the certificate as described}}, we had not refunded the payment, and {product, select, plutonium {the withdrawal period had ended} other {your right of withdrawal had ended}} when you disputed it.',
 		next_title: 'What happens now',
 		next_body:
 			"If you made this payment, you can ask your bank or card company to withdraw the dispute. If the dispute is withdrawn or closes without the money going back to you, nothing happens to your account. Until the dispute closes, you can't buy anything on {product_name}.{privacy_email, select, null {} other { You can ask for a copy of your data anytime by writing to <mail>{privacy_email}</mail>.}}",
 		appeal_title: 'If you think we got this wrong',
-		appeal_body:
-			'{reply, select, yes {Reply to this email and tell us why.} other {{appeals_email, select, null {Contact the admins of this instance and tell them why.} other {Write to <mail>{appeals_email}</mail> and tell us why.}}}} A person who did not make this decision looks at it again, and if the dispute was justified, we take no action against your account.',
+		appeal_body_v2:
+			"{reply, select, yes {Reply to this email within 60 days and tell us why you disagree. It's free, and a person on our team reads and decides your appeal.} other {{appeals_email, select, null {Contact the admins of this instance and tell them why.} other {Write to <mail>{appeals_email}</mail> and tell us why.}}}} If the dispute was justified, we take no action against your account.",
 		signoff: 'The {product_name} team',
 		footer_reason: 'You received this email because of a payment dispute about your {product_name} account.',
+	},
+	plutonium_cancellation_confirmation: {
+		subject: "We've received your {product_name} {premiumName} cancellation",
+		heading: 'Cancellation received',
+		preheader: 'You keep {premiumName} until {endsAt, date, long}',
+		intro:
+			'We received your request to cancel your {plan, select, yearly {yearly} other {monthly}} {premiumName} subscription on {receivedFormatted}.',
+		ends_line: "You keep {premiumName} until {endsAt, date, long}. Your subscription then ends and won't renew.",
+		charge_line:
+			"{unpaid, select, yes {One invoice for {unpaidFormatted} is still unpaid. Canceling doesn't remove it, and we'll keep trying to collect it.} other {We won't charge you again.}}",
+		lead: 'Changed your mind? You can resume your subscription under "Manage subscription" before {endsAt, date, long}.',
+		cta: 'Manage your subscription',
+		reference_line: 'Reference: {reference}',
+		seller: 'Seller: Fluxer Platform AB, 559537-3993, {sellerAddress}, <mail>{sellerEmail}</mail>',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because you canceled your {premiumName} subscription.',
+	},
+	plutonium_card_expiring: {
+		subject: 'Your card expires before your next {product_name} {premiumName} payment',
+		heading: 'Update your card',
+		preheader:
+			'{branded, select, yes {Your {brand} ending in {last4}} other {Your card ending in {last4}}} expires soon',
+		intro:
+			'{branded, select, yes {Your {brand} ending in {last4}} other {Your card ending in {last4}}} expires at the end of {expiryFormatted}. Your next payment of {tax, select, yes {{amountFormatted}} other {{amountFormatted}, plus any tax that applies,}} is due on {chargeAt, date, long}.',
+		lead: 'Update your card before then so your subscription keeps working.',
+		cta: 'Update your payment method',
+		seller: 'Seller: Fluxer Platform AB, 559537-3993, {sellerAddress}, <mail>{sellerEmail}</mail>',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because a card you use for {premiumName} is about to expire.',
+	},
+	plutonium_ended_unpaid: {
+		subject: 'Your {product_name} {premiumName} subscription has ended',
+		heading: 'Your subscription has ended',
+		preheader: "We couldn't collect the payment for your {premiumName} subscription",
+		intro: "Your {premiumName} subscription has ended because we couldn't collect the renewal payment.",
+		owed_line:
+			"{owed, select, none {You don't owe anything for this invoice.} stopped {We've stopped trying to collect this invoice.} open {The invoice for {amountFormatted} is still unpaid.} other {}}",
+		lead: 'You can subscribe again any time.',
+		cta: 'Get {premiumName}',
+		seller: 'Seller: Fluxer Platform AB, 559537-3993, {sellerAddress}, <mail>{sellerEmail}</mail>',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because your {premiumName} subscription ended.',
+	},
+	plutonium_gift_applied: {
+		subject: 'Your gift has been added to your {product_name} {premiumName} subscription',
+		heading: 'Gift added',
+		preheader: "You won't be charged until {trialEnd, date, long}",
+		intro:
+			"Your gifted time has been added. You won't be charged for your {plan, select, yearly {yearly} other {monthly}} {premiumName} subscription until {trialEnd, date, long}.",
+		charge_line:
+			"{method, select, card {On {trialEnd, date, long} we'll charge {tax, select, yes {{amountFormatted}} other {{amountFormatted}, plus any tax that applies,}} to your {brand} ending in {last4}, and your subscription renews every {plan, select, yearly {year} other {month}} until you cancel.} plain_card {On {trialEnd, date, long} we'll charge {tax, select, yes {{amountFormatted}} other {{amountFormatted}, plus any tax that applies,}} to your card ending in {last4}, and your subscription renews every {plan, select, yearly {year} other {month}} until you cancel.} named {On {trialEnd, date, long} we'll charge {tax, select, yes {{amountFormatted}} other {{amountFormatted}, plus any tax that applies,}} using {methodName}, and your subscription renews every {plan, select, yearly {year} other {month}} until you cancel.} other {On {trialEnd, date, long} we'll charge {tax, select, yes {{amountFormatted}} other {{amountFormatted}, plus any tax that applies,}} to your saved payment method, and your subscription renews every {plan, select, yearly {year} other {month}} until you cancel.}}",
+		lead: 'You can cancel any time before then under "Manage subscription".',
+		cta: 'Manage your subscription',
+		seller: 'Seller: Fluxer Platform AB, 559537-3993, {sellerAddress}, <mail>{sellerEmail}</mail>',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because you redeemed a {premiumName} gift.',
+	},
+	plutonium_payment_failed: {
+		subject:
+			"{reason, select, action_required {Confirm your {product_name} {premiumName} payment} other {Your {product_name} {premiumName} payment didn't go through}}",
+		heading:
+			"{reason, select, action_required {Your bank needs you to confirm a payment} other {Your {premiumName} payment didn't go through}}",
+		preheader:
+			"{reason, select, action_required {Confirm {amountFormatted} for {premiumName}} other {We couldn't charge {amountFormatted} for {premiumName}}}",
+		intro:
+			"{reason, select, action_required {Your bank wants you to confirm the renewal payment for your {premiumName} subscription.} other {We couldn't charge the renewal payment for your {premiumName} subscription.}} {access, select, yes {You keep {premiumName} until {accessEndsAt, date, long}.} other {}}",
+		date_label: 'Payment attempted',
+		date_value: '{attemptedAt, date, long}',
+		amount_label: 'Amount',
+		manage_link: 'Update your payment method under "Manage subscription"',
+		note: '{reply, select, yes {If you need help, reply to this email.} other {If you need help, contact the admins of this instance.}}',
+		signoff: 'The {product_name} team',
+		footer_reason:
+			'You received this email because a payment for your {premiumName} subscription on {product_name} needs your attention.',
+		reminder_subject: 'Reminder to confirm your payment for {premiumName}',
+		intro_change:
+			"{reason, select, action_required {Your bank wants you to confirm the payment for the change to your {premiumName} subscription.} other {We couldn't charge the payment for the change to your {premiumName} subscription.}} {access, select, yes {You keep {premiumName} until {accessEndsAt, date, long}.} other {}}",
+	},
+	plutonium_payment_receipt: {
+		subject:
+			'{gift, select, yes {Your {product_name} {premiumName} gift receipt} other {Your {product_name} {premiumName} receipt}}',
+		heading: '{gift, select, yes {Receipt for your {premiumName} gift} other {Receipt for {premiumName}}}',
+		preheader: '{amountFormatted} paid for {premiumName}',
+		intro:
+			'{document, select, yes {{gift, select, yes {Thank you for buying a {premiumName} gift.} other {Thank you for your payment.}}} other {{gift, select, yes {Thank you for buying a {premiumName} gift. This email is your receipt.} other {Thank you for your payment. This email is your receipt.}}}}',
+		document_attached:
+			'{business, select, yes {Your invoice {documentNumber} is attached to this email as a PDF.} other {Your receipt {documentNumber} is attached to this email as a PDF.}}',
+		invoice_label: 'Invoice number',
+		date_label: 'Payment date',
+		date_value: '{paidAt, date, long}',
+		product_label: 'Product',
+		product_value:
+			'{plan, select, monthly {{premiumName}, monthly} yearly {{premiumName}, yearly} gift_1_month {{premiumName} gift, 1 month} gift_1_year {{premiumName} gift, 1 year} other {{premiumName}}}',
+		period_label: 'Period',
+		period_value: '{periodStart, date, long} to\n{periodEnd, date, long}',
+		total_label: 'Total',
+		tax_included: 'Includes {taxFormatted} tax',
+		tax_added: '{taxFormatted} tax added to the price',
+		reverse_charge: 'No VAT was charged because reverse charge applies. The invoice has the details.',
+		credit_label: 'Credit applied',
+		paid_label: 'Amount paid',
+		gift_note:
+			'Your gift link is in your settings under "Gifts". Copy it there and send it to the person you want to give {premiumName} to. Anyone with the link can redeem it.',
+		plan_title: '{gift, select, yes {Your gift} other {Your subscription}}',
+		plan_body:
+			'{renewal, select, month {{premiumName} renews every month at {renewalFormatted}{renewalTax, select, included { including tax} added { plus tax} other {}} until you cancel. You can cancel at any time under "Manage subscription" on the {premiumName} page, and you keep {premiumName} until the end of the period you paid for.} year {{premiumName} renews every year at {renewalFormatted}{renewalTax, select, included { including tax} added { plus tax} other {}} until you cancel. You can cancel at any time under "Manage subscription" on the {premiumName} page, and you keep {premiumName} until the end of the period you paid for.} other {This gift is a one-time purchase. It doesn\'t renew, and nothing more is charged.}}',
+		consent_title: 'Starting right away',
+		consent_body:
+			'On {consentAt, date, long} you asked for {premiumName} to start right away. You also confirmed that you can still withdraw for a full refund until your withdrawal period ends.',
+		consent_body_pro_rata:
+			"{gift, select, yes {On {consentAt, date, long} you asked for this {premiumName} gift to start as soon as it's redeemed. You also confirmed that if you withdraw within 14 days, you get everything back if the code hasn't been redeemed, and otherwise you pay for the days the recipient had {premiumName} and get the rest back.} other {On {consentAt, date, long} you asked for {premiumName} to start right away. You also confirmed that if you withdraw within 14 days, you pay for the days you had {premiumName} and get the rest back, and that you can no longer withdraw once it has been fully provided.}}",
+		withdrawal_title: 'Right of withdrawal',
+		withdrawal_body:
+			"You can withdraw from this purchase until {withdrawalEndsAt, date, long} and get a full refund. To withdraw, reply to this email or write to <mail>{sellerEmail}</mail> and tell us that you withdraw. You can use the form below, but you don't have to.",
+		withdrawal_body_pro_rata:
+			'You can withdraw from this purchase until {withdrawalEndsAt, date, long}. {gift, select, yes {If the code hasn\'t been redeemed, we refund everything you paid. If it has, we refund what you paid less the share for the days the recipient had {premiumName}.} other {If you do, we refund what you paid less the share for the days you had {premiumName}. An automatic renewal of the same plan doesn\'t start a new withdrawal period.}} To withdraw, use "Withdraw from contract here" on the {premiumName} page in "User settings", or reply to this email or write to <mail>{sellerEmail}</mail> and tell us that you withdraw. You can use the form below, but you don\'t have to.',
+		withdrawal_body_brazil:
+			"You can withdraw from this purchase until 23:59 Acre time (UTC-5) on {withdrawalEndsAt, date, long} and get back everything you paid. To withdraw, reply to this email or write to <mail>{sellerEmail}</mail> and tell us that you withdraw. You can use the form below, but you don't have to.{gift, select, yes {} other { An automatic renewal of the same plan doesn't start a new withdrawal period.}}",
+		withdrawal_note:
+			"The refund button in the app works for 3 days after a payment. It's an extra on top of your right of withdrawal and doesn't replace it.",
+		form_title: 'Withdrawal form',
+		form_body:
+			'To Fluxer Platform AB, {sellerAddress}, <mail>{sellerEmail}</mail>:\nI withdraw from my contract for {premiumName}, bought on {paidAt, date, long}.\nInvoice number: {invoiceNumber}\nName:\nAddress:\nDate:\nSignature (only on paper):',
+		seller:
+			'Seller: Fluxer Platform AB, 559537-3993, registered office (säte) Haninge, Sweden, {sellerAddress}, <mail>{sellerEmail}</mail>',
+		manage_link: 'Manage your subscription',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because you paid for {premiumName} on {product_name}.',
+	},
+	plutonium_refund_receipt: {
+		subject: 'Your {product_name} {premiumName} refund',
+		heading: 'Refund of {amountFormatted}',
+		preheader: '{amountFormatted} refunded for {premiumName}',
+		intro:
+			'{partial, select, yes {We refunded {amountFormatted}, part of your payment, to the card or account you paid with.} other {We refunded {amountFormatted} to the card or account you paid with.}} It usually takes 5 to 10 business days to show up, depending on your bank.',
+		invoice_label: 'Invoice number',
+		date_label: 'Refund date',
+		date_value: '{refundedAt, date, long}',
+		product_label: 'Product',
+		product_value:
+			'{plan, select, monthly {{premiumName}, monthly} yearly {{premiumName}, yearly} gift_1_month {{premiumName} gift, 1 month} gift_1_year {{premiumName} gift, 1 year} other {{premiumName}}}',
+		original_label: 'Original payment',
+		original_value: '{paidFormatted} on {paidAt, date, long}',
+		refund_label: 'Refunded',
+		credit_note_label: 'Credit note number',
+		credit_note_attached: 'The credit note for this refund is attached to this email as a PDF.',
+		note: '{reply, select, yes {Questions about this refund? Reply to this email.} other {If you have questions about this refund, contact the admins of this instance.}}',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because a {premiumName} payment on {product_name} was refunded.',
+		ended_line:
+			"We received your refund request on {requestedFormatted}. The refund also canceled your {premiumName} subscription. It has ended and won't renew. Reference: {reference}.",
+	},
+	plutonium_renewal_notice: {
+		subject:
+			'{gift, select, yes {Your gifted {product_name} {premiumName} time ends on {giftEndsAt, date, long}} other {{annual, select, yes {Your yearly reminder about your {product_name} {premiumName} subscription} other {Your {product_name} {premiumName} subscription renews on {chargeAt, date, long}}}}}',
+		heading:
+			'{gift, select, yes {Your gifted time ends soon} other {{annual, select, yes {Your yearly renewal reminder} other {Your subscription renews soon}}}}',
+		preheader: 'Your {premiumName} subscription renews on {chargeAt, date, long}',
+		annual_line:
+			'This is your yearly reminder that your monthly {premiumName} subscription renews automatically every month until you cancel.',
+		gift_line:
+			'Your gifted time ends on {giftEndsAt, date, long}. After that, your {plan, select, yearly {yearly} other {monthly}} {premiumName} subscription renews automatically unless you cancel before then.',
+		intro:
+			'Your {plan, select, yearly {yearly} other {monthly}} {premiumName} subscription renews automatically on {chargeAt, date, long} unless you cancel before then.',
+		charge_line:
+			"{method, select, card {On {chargeAt, date, long} we'll charge {tax, select, yes {{nextFormatted}} other {{nextFormatted}, plus any tax that applies,}} to your {brand} ending in {last4}.} plain_card {On {chargeAt, date, long} we'll charge {tax, select, yes {{nextFormatted}} other {{nextFormatted}, plus any tax that applies,}} to your card ending in {last4}.} named {On {chargeAt, date, long} we'll charge {tax, select, yes {{nextFormatted}} other {{nextFormatted}, plus any tax that applies,}} using {methodName}.} other {On {chargeAt, date, long} we'll charge {tax, select, yes {{nextFormatted}} other {{nextFormatted}, plus any tax that applies,}} to your saved payment method.}}",
+		year_line: 'The charge on {yearStartsAt, date, long} starts your next year of {premiumName}.',
+		after_line:
+			'{differs, select, yes {After that, the price is {tax, select, yes {{regularFormatted}} other {{regularFormatted}, plus any tax that applies,}} every {plan, select, yearly {year} other {month}}.} other {After that, you pay {tax, select, yes {{regularFormatted}} other {{regularFormatted}, plus any tax that applies,}} every {plan, select, yearly {year} other {month}} until you cancel.}}',
+		box: 'To stop the renewal, cancel before {cancelByFormatted}.',
+		cta: 'Manage your subscription',
+		keep_line: "If you cancel, you keep {premiumName} until {chargeAt, date, long} and we won't charge you again.",
+		seller: 'Seller: Fluxer Platform AB, 559537-3993, {sellerAddress}, <mail>{sellerEmail}</mail>',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because your {premiumName} subscription renews automatically.',
+	},
+	plutonium_withdrawal_receipt: {
+		subject: 'We received your {product_name} {premiumName} withdrawal',
+		intro: 'We received your withdrawal on {receivedAt, date, long} at {receivedAt, time, short}.',
+		statement_label: 'Your withdrawal',
+		statement_value:
+			'{gift, select, yes {I withdraw from my contract for the {premiumName} gift I bought on {purchasedAt, date, long}.} other {I withdraw from my contract for the {premiumName} subscription I paid for on {purchasedAt, date, long}.}}',
+		name_label: 'Name',
+		reference_label: 'Reference',
+		refund_label: 'Refund',
+		currency_label: 'Currency',
+		refund:
+			"{gift, select, yes {The gift code stops working, and if someone redeemed it, they lose the time it gave them.} other {Your {premiumName} subscription has ended and won't renew.}} {refund, select, manual {We couldn't start the refund of {amountFormatted} automatically, so a person on our team sends it to the card or account you paid with {brazil, select, yes {right away} other {within 14 days}}.} other {We started a full refund of {amountFormatted} to the card or account you paid with. It usually takes 5 to 10 business days to show up, depending on your bank.}} When the refund is done, we email you the credit note.",
+		refund_pro_rata:
+			"{gift, select, yes {The gift code stops working, and if someone redeemed it, they lose the time it gave them.} other {Your {premiumName} subscription has ended and won't renew.}} {refund, select, manual {We couldn't start the refund of {amountFormatted} automatically, so a person on our team sends it to the card or account you paid with {brazil, select, yes {right away} other {within 14 days}}.} other {We started a refund of {amountFormatted} to the card or account you paid with. That is what you paid less the share for the days {premiumName} was in use. It usually takes 5 to 10 business days to show up, depending on your bank.}} When the refund is done, we email you the credit note.",
+		note: 'Keep this email as confirmation that we received your withdrawal.',
+		signoff: 'The {product_name} team',
+		footer_reason: 'You received this email because you withdrew from a {premiumName} purchase on {product_name}.',
 	},
 	reauth_code: {
 		subject: 'Your {product_name} confirmation code',
@@ -486,7 +845,11 @@ export const EMAIL_I18N_MESSAGES = {
 	report_resolved: {
 		subject: 'Your {product_name} report has been reviewed',
 		intro:
-			"{outcome, select, removed {We removed the content you reported because it broke our rules.} restricted {The account you reported broke our rules, and we restricted it. We don't share what we did to another person's account.} action_taken {What you reported broke our rules, and we took action. We don't share what we did to another person's account.} no_violation {What you reported doesn't break our rules, so we left it as it is.} other {We closed your report.}}",
+			"{outcome, select, removed {We removed the content you reported because it broke our rules.} restricted {The account you reported broke our rules, and we took action on it. We don't share which action we took.} action_taken {What you reported broke our rules, and we took action. We don't share which action we took.} no_violation {What you reported doesn't break our rules, so we left it as it is.} other {We closed your report.}}",
+		about:
+			'{target, select, message_community {This is about your report on a message in #{channelName} in "{communityName}", sent on {reportedAt, date, long}.} message_dm {This is about your report on a message in a direct message, sent on {reportedAt, date, long}.} message {This is about your report on a message, sent on {reportedAt, date, long}.} user {This is about your report on the account "{username}", sent on {reportedAt, date, long}.} community {This is about your report on the community "{communityName}", sent on {reportedAt, date, long}.} other {This is about the report you sent on {reportedAt, date, long}.}}',
+		thanks:
+			'{outcome, select, removed {Thanks for reporting it. Reports like yours help keep {product_name} safe for everyone.} restricted {Thanks for reporting it. Reports like yours help keep {product_name} safe for everyone.} action_taken {Thanks for reporting it. Reports like yours help keep {product_name} safe for everyone.} other {Thanks for letting us know.}}',
 		report_label: 'Report ID',
 		comment_label: 'Note from our team',
 		note: '{reply, select, yes {If you disagree, reply to this email within 60 days.} other {{appeals_email, select, null {} other {If you disagree, email <mail>{appeals_email}</mail> within 60 days and include the report ID.}}}}{appeals_email, select, null {} other { In the EU, you can also go to a certified <dsa>out-of-court dispute settlement body</dsa> or complain to the Digital Services Coordinator in your country.}}',

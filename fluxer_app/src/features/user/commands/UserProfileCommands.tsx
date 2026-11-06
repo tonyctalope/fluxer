@@ -16,11 +16,11 @@ import {Profile, type ProfileWire} from '@app/features/user/models/Profile';
 import UserProfile from '@app/features/user/state/UserProfile';
 import UserProfileMobile from '@app/features/user/state/UserProfileMobile';
 import Users from '@app/features/user/state/Users';
+import {warmProfileBadgeImages} from '@app/features/user/utils/ProfileUtils';
 import {ME} from '@fluxer/constants/src/AppConstants';
 import type {
 	ProfileBadgePreviewRequest,
 	ProfileBadgePreviewResponse,
-	ProfileBadgeResponse,
 } from '@fluxer/schema/src/domains/user/ProfileBadgeSchemas';
 
 const logger = new Logger('UserProfiles');
@@ -66,6 +66,7 @@ async function requestProfile(userId: string, guildId?: string): Promise<Profile
 function storeProfile(profile: ProfileWire, guildId?: string): Profile {
 	Users.handleUserUpdate(profile.user);
 	const profileRecord = new Profile(profile, guildId);
+	warmProfileBadgeImages(profileRecord.profileBadges);
 	UserProfile.handleProfileCreate(profileRecord);
 	return profileRecord;
 }
@@ -98,11 +99,13 @@ export async function fetch(userId: string, guildId?: string): Promise<Profile> 
 
 export async function previewBadges(
 	settings: ProfileBadgePreviewRequest,
-): Promise<ReadonlyArray<ProfileBadgeResponse>> {
+	signal?: AbortSignal,
+): Promise<ProfileBadgePreviewResponse> {
 	const response = await http.post<ProfileBadgePreviewResponse>(Endpoints.USER_PROFILE_BADGES_PREVIEW, {
 		body: settings,
+		signal,
 	});
-	return response.body.profile_badges;
+	return response.body;
 }
 
 export function invalidate(userId: string, guildId?: string): void {

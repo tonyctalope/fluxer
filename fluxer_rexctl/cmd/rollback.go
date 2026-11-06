@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/backup"
+	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/checks"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/engine"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/instance"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/release"
@@ -20,6 +21,7 @@ type rollbackFlags struct {
 	DryRun    bool
 	RestoreDB bool
 	Confirm   string
+	Resume    string
 }
 
 func newRollbackCmd(app *App) *cobra.Command {
@@ -34,6 +36,8 @@ func newRollbackCmd(app *App) *cobra.Command {
 	}
 	c.Flags().BoolVar(&f.DryRun, "dry-run", false, "show what would happen without changing anything")
 	c.Flags().BoolVar(&f.RestoreDB, "restore-database", false, "also restore the database from the backup taken before the upgrade")
+	c.Flags().StringVar(&f.Resume, release.ResumeFlag, "", "")
+	_ = c.Flags().MarkHidden(release.ResumeFlag)
 	confirmFlag(c, &f.Confirm)
 	return c
 }
@@ -42,6 +46,14 @@ func runRollback(ctx context.Context, app *App, f *rollbackFlags) error {
 	inst, err := app.Instance()
 	if err != nil {
 		return err
+	}
+	if inst.State.Upgrade != nil && !f.DryRun {
+		if err := managed(inst); err != nil {
+			return err
+		}
+		if handedOver, err := updateBeforeRecovery(ctx, app, f.Resume, "", "rexctl rollback"); err != nil || handedOver {
+			return err
+		}
 	}
 	return app.Locked(ctx, inst, func() error {
 		if err := managed(inst); err != nil {
@@ -123,6 +135,13 @@ func runRollback(ctx context.Context, app *App, f *rollbackFlags) error {
 			app.UI.Info("Dry run. Nothing changed.")
 			return nil
 		}
+		refs, _ := release.Images(inst, prev)
+		if sp, ok := checks.PullSpace(ctx, e, inst.Dir, refs, release.ImageSizes(inst, prev)); ok && sp.Short() {
+			return ui.Refused(
+				fmt.Sprintf("Going back to Fluxer %s downloads its images again, which needs about %s of free disk space in %s, and %s is free.", prevShort, ui.Bytes(int64(sp.Need)), sp.Path, ui.Bytes(int64(sp.Free))),
+				spaceFix(e, sp, "rexctl rollback"),
+			)
+		}
 		if schemaChanged {
 			app.UI.Warn(fmt.Sprintf("Fluxer %s may have changed the database in a way %s can't read.", curShort, prevShort), "If it doesn't start, run rexctl rollback --restore-database.")
 			if app.UI.Interactive() {
@@ -146,20 +165,21 @@ func runRollback(ctx context.Context, app *App, f *rollbackFlags) error {
 			app.UI.Info("Nothing changed.")
 			return nil
 		}
+		prevBackup := inst.State.PreviousBackup
 		if err := release.Snapshot(inst, cur, refList(inst.State.Images.Refs)); err != nil {
-			return ui.Wrap(err, fmt.Sprintf("Couldn't save the files of Fluxer %s.", curShort), "Check that the disk isn't full, then run rexctl rollback again.")
+			return saveFailed(inst, err, fmt.Sprintf("Couldn't save the files of Fluxer %s.", curShort), "rexctl rollback")
 		}
 		var put []string
 		err = app.UI.Step(ctx, "Going back to "+prevShort, func(ctx context.Context, s *ui.Step) error {
 			s.Done("Went back to %s. Your instance is running.", prevShort)
 			var err error
-			put, err = restoreRelease(ctx, inst, e, prev)
+			put, err = restoreRelease(ctx, app, inst, e, prev)
 			return err
 		})
 		if err != nil {
-			return rollbackFailed(ctx, app, inst, e, cur, prev, err)
+			return rollbackFailed(ctx, app, inst, e, cur, prev, prevBackup, err)
 		}
-		inst.State.PreviousRelease = ""
+		inst.State.PreviousRelease, inst.State.PreviousBackup = "", ""
 		if err := inst.Save(); err != nil {
 			return ui.Wrap(err, "Couldn't save your instance's state.", "Run rexctl doctor to see what's wrong.")
 		}
@@ -170,7 +190,7 @@ func runRollback(ctx context.Context, app *App, f *rollbackFlags) error {
 	})
 }
 
-func rollbackFailed(ctx context.Context, app *App, inst *instance.Instance, e *engine.Engine, cur, prev string, cause error) error {
+func rollbackFailed(ctx context.Context, app *App, inst *instance.Instance, e *engine.Engine, cur, prev, prevBackup string, cause error) error {
 	curShort, prevShort := versionPair(cur, prev)
 	logPath := writeFailureLog(ctx, inst, e.Named(inst.Project(), inst.Dir), "rollback-"+release.DirName(prev)+".log", cause, nil)
 	app.UI.Fail(fmt.Sprintf("Fluxer %s didn't start.", prevShort), "")
@@ -178,8 +198,8 @@ func rollbackFailed(ctx context.Context, app *App, inst *instance.Instance, e *e
 	if ctx.Err() == nil {
 		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recoveryTimeout)
 		defer cancel()
-		_, err := restoreRelease(cctx, inst, e, cur)
-		inst.State.Release, inst.State.PreviousRelease = cur, prev
+		_, err := restoreRelease(cctx, app, inst, e, cur)
+		inst.State.Release, inst.State.PreviousRelease, inst.State.PreviousBackup = cur, prev, prevBackup
 		_ = inst.Save()
 		if err == nil {
 			app.UI.OK("Went back to %s. Your instance is running.", curShort)
@@ -204,23 +224,46 @@ func rollbackWithBackup(ctx context.Context, app *App, inst *instance.Instance, 
 		return err
 	}
 	when := backupTime(info.CreatedAt)
+	if info.WithoutUploads() {
+		if e == nil {
+			if e, err = app.Engine(ctx, inst); err != nil {
+				return err
+			}
+		}
+		if err := checkUploadsInPlace(ctx, inst.Dir, inst, e, info.Path); err != nil {
+			return err
+		}
+	}
 	if f.DryRun {
 		app.UI.Info("Your instance goes back to the backup from %s, on Fluxer %s.", when, prevShort)
-		app.UI.Info("Anything that changed since then is lost.")
+		if info.WithoutUploads() {
+			app.UI.Info("Messages and changes since then are lost. Uploads stay as they are.")
+		} else {
+			app.UI.Info("Messages, uploads and changes since then are lost.")
+		}
 		app.UI.Info("Dry run. Nothing changed.")
 		return nil
 	}
 	what := fmt.Sprintf("This restores the backup from %s. Messages, uploads and changes since then will be lost.", when)
+	if info.WithoutUploads() {
+		what = fmt.Sprintf("This restores the backup from %s. Messages and changes since then will be lost. Uploads stay as they are.", when)
+	}
 	if err := app.UI.ConfirmDestructive(what, inst.Domain(), f.Confirm); err != nil {
 		return err
 	}
 	return app.UI.Step(ctx, "Restoring the backup from "+when, func(ctx context.Context, s *ui.Step) error {
-		restored, err := backup.Restore(ctx, info.Path, inst.Dir, e, backup.RestoreOptions{Progress: func(stage string) {
-			if t := restoreStageTitle(stage); t != "" {
-				s.Title(t)
-			}
-		}})
+		restored, err := backup.Restore(ctx, info.Path, inst.Dir, e, backup.RestoreOptions{
+			Progress: func(stage string) {
+				if t := restoreStageTitle(stage); t != "" {
+					s.Title(t)
+				}
+			},
+			Adopted: matchRestoredSites(app),
+		})
 		if err != nil {
+			if errors.Is(err, backup.ErrUploadsNotHere) {
+				return uploadsNotHere(inst, info.Domain, info.Project, err)
+			}
 			return err
 		}
 		if err := e.Named(restored.Project(), restored.Dir).WaitReady(ctx, readyTimeout, showReadiness(s, "Starting Fluxer "+prevShort)); err != nil {
@@ -236,18 +279,41 @@ func upgradeBackup(inst *instance.Instance, prev string) (*backup.Info, error) {
 	if err != nil {
 		return nil, ui.Wrap(err, "Couldn't read your backups.", "Run rexctl backup list to see why.")
 	}
-	var best *backup.Info
-	for i := range list {
-		b := &list[i]
-		if b.Release != prev {
-			continue
-		}
-		if best == nil || b.CreatedAt.After(best.CreatedAt) {
-			best = b
-		}
-	}
+	best := backupFor(inst, list, prev)
 	if best == nil {
 		return nil, ui.Refused(fmt.Sprintf("There's no backup from Fluxer %s on this machine.", prev), "Run rexctl restore with a backup file you kept somewhere else.")
 	}
 	return best, nil
+}
+
+func backupFor(inst *instance.Instance, list []backup.Info, version string) *backup.Info {
+	if inst.State == nil {
+		return backup.NewestOf(list, version)
+	}
+	if u := inst.State.Upgrade; u != nil && u.Backup != "" {
+		if b := knownBackup(list, u.Backup); b != nil {
+			return b
+		}
+	}
+	return rollbackTarget(inst, list, version)
+}
+
+func rollbackTarget(inst *instance.Instance, list []backup.Info, version string) *backup.Info {
+	if inst.State != nil && inst.State.PreviousBackup != "" {
+		if b := knownBackup(list, inst.State.PreviousBackup); b != nil && b.Release == version {
+			return b
+		}
+	}
+	return backup.NewestOf(list, version)
+}
+
+func knownBackup(list []backup.Info, path string) *backup.Info {
+	if b := backup.Find(list, path); b != nil {
+		return b
+	}
+	b, err := backup.Stat(path)
+	if err != nil {
+		return nil
+	}
+	return b
 }

@@ -29,10 +29,15 @@ impl RouterService for SnowflakesRouter {
     fn route_key(request: &Self::Request) -> String {
         request.routing_key().unwrap_or_default().to_owned()
     }
-    fn shard_for(&self, request: &Self::Request, ring: &HashRing) -> u32 {
+    fn shard_candidates(&self, request: &Self::Request, ring: &HashRing) -> Vec<u32> {
         match request.routing_key() {
-            Some(routing_key) => ring.owner(routing_key),
-            None => self.next.fetch_add(1, Ordering::Relaxed) % self.shard_count,
+            Some(routing_key) => vec![ring.owner(routing_key)],
+            None => {
+                let first = self.next.fetch_add(1, Ordering::Relaxed) % self.shard_count;
+                (0..self.shard_count)
+                    .map(|offset| (first + offset) % self.shard_count)
+                    .collect()
+            }
         }
     }
 }

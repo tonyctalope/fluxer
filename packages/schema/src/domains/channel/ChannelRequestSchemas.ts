@@ -31,6 +31,7 @@ import {
 } from '@fluxer/schema/src/domains/channel/ForumRequestSchemas';
 import {ThreadAutoArchiveDurationSchema} from '@fluxer/schema/src/domains/channel/ThreadRequestSchemas';
 import {ReadStateResponse} from '@fluxer/schema/src/domains/gateway/GatewaySchemas';
+import {withBase64Binary} from '@fluxer/schema/src/primitives/Base64BinaryFields';
 import {ChannelOverwriteTypeSchema, GeneralChannelNameType} from '@fluxer/schema/src/primitives/ChannelValidators';
 import {createBase64ImageType} from '@fluxer/schema/src/primitives/FileValidators';
 import {ContentWarningLevelSchema} from '@fluxer/schema/src/primitives/GuildValidators';
@@ -95,6 +96,7 @@ const ChannelCommonBase = z.object({
 		),
 	permission_overwrites: z
 		.array(ChannelOverwriteRequest)
+		.max(10000)
 		.optional()
 		.describe('Permission overwrites for roles and members'),
 	rate_limit_per_user: z
@@ -460,17 +462,19 @@ export const ReadStateAckResponse = z.object({
 
 export type ReadStateAckResponse = z.infer<typeof ReadStateAckResponse>;
 
-export const ChannelPositionUpdateRequest = z.array(
-	z.object({
-		id: SnowflakeType.describe('The ID of the channel to reposition'),
-		position: z.number().int().nonnegative().optional().describe('New position for the channel'),
-		parent_id: SnowflakeType.nullish().describe('New parent category ID'),
-		preceding_sibling_id: SnowflakeType.nullish().describe(
-			'ID of the sibling channel that should directly precede this channel after reordering',
-		),
-		lock_permissions: z.boolean().optional().describe('Whether to sync permissions with the new parent'),
-	}),
-);
+export const ChannelPositionUpdateRequest = z
+	.array(
+		z.object({
+			id: SnowflakeType.describe('The ID of the channel to reposition'),
+			position: z.number().int().nonnegative().optional().describe('New position for the channel'),
+			parent_id: SnowflakeType.nullish().describe('New parent category ID'),
+			preceding_sibling_id: SnowflakeType.nullish().describe(
+				'ID of the sibling channel that should directly precede this channel after reordering',
+			),
+			lock_permissions: z.boolean().optional().describe('Whether to sync permissions with the new parent'),
+		}),
+	)
+	.max(10000);
 
 export type ChannelPositionUpdateRequest = z.infer<typeof ChannelPositionUpdateRequest>;
 
@@ -488,7 +492,7 @@ export const CallUpdateBodySchema = z.object({
 export type CallUpdateBodySchema = z.infer<typeof CallUpdateBodySchema>;
 
 export const CallRingBodySchema = z.object({
-	recipients: z.array(SnowflakeType).optional().describe('User IDs to ring for the call'),
+	recipients: z.array(SnowflakeType).max(1000).optional().describe('User IDs to ring for the call'),
 	latitude: GeoCoordinateString.optional().describe('Client latitude used for automatic region selection'),
 	longitude: GeoCoordinateString.optional().describe('Client longitude used for automatic region selection'),
 });
@@ -507,7 +511,7 @@ export type StreamUpdateBodySchema = z.infer<typeof StreamUpdateBodySchema>;
 
 export const StreamPreviewUploadBodySchema = z.object({
 	channel_id: SnowflakeType.describe('The ID of the channel where the stream is active'),
-	thumbnail: createStringType(1, 2000000).describe('Base64-encoded thumbnail image data'),
+	thumbnail: withBase64Binary(createStringType(1, 2000000)).describe('Base64-encoded thumbnail image data'),
 	content_type: createStringType(1, 64).optional().describe('MIME type of the thumbnail image'),
 });
 

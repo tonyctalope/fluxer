@@ -1,25 +1,115 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
+import * as ImageCacheUtils from '@app/features/messaging/utils/ImageCacheUtils';
 import * as PremiumModalCommands from '@app/features/premium/commands/PremiumModalCommands';
+import * as ModalCommands from '@app/features/ui/commands/ModalCommands';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
 import {Tooltip} from '@app/features/ui/tooltip/Tooltip';
 import {handleExternalLinkClick} from '@app/features/ui/utils/NativeUtils';
+import {BadgeListModal} from '@app/features/user/components/modals/BadgeListModal';
 import styles from '@app/features/user/components/popouts/UserProfileBadges.module.css';
+import {profileBadgeImageUrl} from '@app/features/user/utils/ProfileUtils';
+import {
+	MORE_BADGES_DESCRIPTOR,
+	SHOW_ALL_BADGES_COUNT_DESCRIPTOR,
+	SHOW_ALL_BADGES_DESCRIPTOR,
+} from '@app/features/user/utils/UserMessageDescriptors';
 import type {ProfileBadgeResponse} from '@fluxer/schema/src/domains/user/ProfileBadgeSchemas';
+import {msg} from '@lingui/core/macro';
+import {useLingui} from '@lingui/react/macro';
+import {PencilSimpleIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
+import {useEffect, useState} from 'react';
 
 interface UserProfileBadgesProps {
 	badges: ReadonlyArray<ProfileBadgeResponse>;
 	isModal?: boolean;
 	isMobile?: boolean;
+	maxVisible?: number;
+	onEditBadges?: () => void;
 	'data-flx'?: string;
 }
 
-function badgeImageUrl(asset: string): string {
-	return `${RuntimeConfig.staticCdnEndpoint}/badges/${asset}.webp`;
+const EDIT_BADGES_DESCRIPTOR = msg({
+	message: 'Edit badges',
+	comment:
+		'Tooltip and screen reader label for the pencil button next to your own profile badges. It opens the profile settings where you choose which badges other people see.',
+});
+
+const BADGE_REVEAL_TIMEOUT_MS = 1000;
+const COMPACT_VISIBLE_BADGES = 7;
+const WIDE_VISIBLE_BADGES = 15;
+
+function openBadgeList(badges: ReadonlyArray<ProfileBadgeResponse>, dataFlx: string): void {
+	ModalCommands.push(
+		ModalCommands.modal(() => (
+			<BadgeListModal
+				items={badges.map((badge) => ({
+					key: badge.key,
+					imageUrl: profileBadgeImageUrl(badge),
+					caption: badge.caption ?? null,
+					title: badge.details?.title ?? badge.label,
+					lines: badge.details?.lines ?? [],
+					quote: badge.quote ?? null,
+					href: badge.href ?? null,
+				}))}
+				data-flx={`${dataFlx}.badge-list-modal`}
+			/>
+		)),
+	);
+}
+
+function isSettledImage(url: string): boolean {
+	return ImageCacheUtils.hasImage(url) || ImageCacheUtils.hasFailedImage(url);
+}
+
+function useBadgeImagesReady(badges: ReadonlyArray<ProfileBadgeResponse>): boolean {
+	const key = badges.flatMap((badge) => profileBadgeImageUrl(badge) ?? []).join('\n');
+	const settled = key === '' || key.split('\n').every(isSettledImage);
+	const [readyKey, setReadyKey] = useState<string | null>(null);
+	useEffect(() => {
+		if (settled) return;
+		const urls = key.split('\n');
+		let pending = urls.length;
+		const settle = () => {
+			pending -= 1;
+			if (pending === 0) setReadyKey(key);
+		};
+		const cancels = urls.map((url) => ImageCacheUtils.loadImage(url, settle, settle));
+		const timer = window.setTimeout(() => setReadyKey(key), BADGE_REVEAL_TIMEOUT_MS);
+		return () => {
+			window.clearTimeout(timer);
+			for (const cancel of cancels) cancel();
+		};
+	}, [key, settled]);
+	return settled || readyKey === key;
+}
+
+function ProfileBadgeQuote({quote, 'data-flx': dataFlx}: {quote: string; 'data-flx': string}) {
+	return (
+		<span className={styles.detailsQuote} dir="auto" data-flx={dataFlx}>
+			{`"${quote}"`}
+		</span>
+	);
+}
+
+function ProfileBadgeLabelTooltip({
+	label,
+	quote,
+	'data-flx': dataFlx,
+}: {
+	label: string;
+	quote: string;
+	'data-flx': string;
+}) {
+	return (
+		<div className={styles.details} data-flx={dataFlx}>
+			<span data-flx={`${dataFlx}.label`}>{label}</span>
+			<ProfileBadgeQuote quote={quote} data-flx={`${dataFlx}.quote`} />
+		</div>
+	);
 }
 
 function ProfileBadgeDetailsTooltip({
@@ -31,11 +121,12 @@ function ProfileBadgeDetailsTooltip({
 	details: NonNullable<ProfileBadgeResponse['details']>;
 	'data-flx': string;
 }) {
+	const imageUrl = profileBadgeImageUrl(badge);
 	return (
 		<div className={styles.details} data-flx={dataFlx}>
-			{badge.asset !== null && (
+			{imageUrl !== null && (
 				<img
-					src={badgeImageUrl(badge.asset)}
+					src={imageUrl}
 					alt=""
 					className={styles.detailsArt}
 					style={badge.aspect_ratio ? {width: 'auto', aspectRatio: badge.aspect_ratio} : undefined}
@@ -50,6 +141,7 @@ function ProfileBadgeDetailsTooltip({
 					{line}
 				</span>
 			))}
+			{badge.quote && <ProfileBadgeQuote quote={badge.quote} data-flx={`${dataFlx}.quote`} />}
 		</div>
 	);
 }
@@ -60,8 +152,20 @@ function opensPremiumModal(badge: ProfileBadgeResponse): boolean {
 }
 
 export const UserProfileBadges: React.FC<UserProfileBadgesProps> = observer(
-	({badges, isModal = false, isMobile = false, 'data-flx': dataFlx = 'user.user-profile-badges'}) => {
-		if (badges.length === 0) {
+	({
+		badges,
+		isModal = false,
+		isMobile = false,
+		maxVisible,
+		onEditBadges,
+		'data-flx': dataFlx = 'user.user-profile-badges',
+	}) => {
+		const {i18n} = useLingui();
+		const limit = maxVisible ?? (isModal && !isMobile ? WIDE_VISIBLE_BADGES : COMPACT_VISIBLE_BADGES);
+		const visible = badges.length > limit ? badges.slice(0, limit) : badges;
+		const hidden = badges.length - visible.length;
+		const ready = useBadgeImagesReady(visible);
+		if (badges.length === 0 && !onEditBadges) {
 			return null;
 		}
 		const containerClassName = isModal
@@ -103,12 +207,13 @@ export const UserProfileBadges: React.FC<UserProfileBadgesProps> = observer(
 			);
 		};
 		return (
-			<div className={containerClassName} data-flx={dataFlx}>
-				{badges.map((badge) => {
+			<div className={clsx(containerClassName, !ready && styles.pending)} data-flx={dataFlx}>
+				{visible.map((badge) => {
+					const imageUrl = profileBadgeImageUrl(badge);
 					const content =
-						badge.asset !== null ? (
+						imageUrl !== null ? (
 							<img
-								src={badgeImageUrl(badge.asset)}
+								src={imageUrl}
 								alt={badge.accessible_label ?? badge.caption ?? badge.label}
 								className={touch ? styles.badgeMobile : styles.badgeDesktop}
 								style={badge.aspect_ratio ? {width: 'auto', aspectRatio: badge.aspect_ratio} : undefined}
@@ -124,20 +229,55 @@ export const UserProfileBadges: React.FC<UserProfileBadgesProps> = observer(
 							</span>
 						);
 					const details = badge.details ?? null;
-					const tooltipText =
-						details && !touch
-							? () => (
-									<ProfileBadgeDetailsTooltip badge={badge} details={details} data-flx={`${dataFlx}.tooltip-details`} />
-								)
-							: badge.label;
+					const quote = badge.quote ?? null;
+					let tooltipText: string | (() => React.ReactNode) = badge.label;
+					if (details && !touch) {
+						tooltipText = () => (
+							<ProfileBadgeDetailsTooltip badge={badge} details={details} data-flx={`${dataFlx}.tooltip-details`} />
+						);
+					} else if (quote) {
+						tooltipText = () => (
+							<ProfileBadgeLabelTooltip label={badge.label} quote={quote} data-flx={`${dataFlx}.tooltip-label`} />
+						);
+					}
 					return (
-						<Tooltip key={badge.kind} text={tooltipText} maxWidth="xl" data-flx={`${dataFlx}.tooltip`}>
+						<Tooltip key={badge.key} text={tooltipText} maxWidth="xl" data-flx={`${dataFlx}.tooltip`}>
 							<FocusRing offset={-2} data-flx={`${dataFlx}.focus-ring`}>
 								{renderInteractiveWrapper(badge, content)}
 							</FocusRing>
 						</Tooltip>
 					);
 				})}
+				{hidden > 0 && (
+					<Tooltip text={i18n._(SHOW_ALL_BADGES_DESCRIPTOR)} data-flx={`${dataFlx}.more-tooltip`}>
+						<FocusRing offset={-2} data-flx={`${dataFlx}.more-focus-ring`}>
+							<button
+								type="button"
+								className={clsx(styles.moreButton, touch ? styles.moreButtonMobile : styles.moreButtonDesktop)}
+								aria-label={i18n._(SHOW_ALL_BADGES_COUNT_DESCRIPTOR, {count: hidden})}
+								onClick={() => openBadgeList(badges, dataFlx)}
+								data-flx={`${dataFlx}.more-button`}
+							>
+								{i18n._(MORE_BADGES_DESCRIPTOR, {count: hidden})}
+							</button>
+						</FocusRing>
+					</Tooltip>
+				)}
+				{onEditBadges && (
+					<Tooltip text={i18n._(EDIT_BADGES_DESCRIPTOR)} data-flx={`${dataFlx}.edit-tooltip`}>
+						<FocusRing offset={-2} data-flx={`${dataFlx}.edit-focus-ring`}>
+							<button
+								type="button"
+								className={clsx(styles.editButton, touch ? styles.badgeMobile : styles.badgeDesktop)}
+								aria-label={i18n._(EDIT_BADGES_DESCRIPTOR)}
+								onClick={onEditBadges}
+								data-flx={`${dataFlx}.edit-button`}
+							>
+								<PencilSimpleIcon weight="bold" className={styles.editIcon} data-flx={`${dataFlx}.edit-icon`} />
+							</button>
+						</FocusRing>
+					</Tooltip>
+				)}
 			</div>
 		);
 	},

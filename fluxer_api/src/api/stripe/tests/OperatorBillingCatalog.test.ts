@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import {createTestAccount} from '@app/api/auth/tests/AuthTestUtils';
 import {createUserID} from '@app/api/BrandedTypes';
 import {Config} from '@app/api/Config';
+import {setCachedAccountIdentity} from '@app/api/instance/AccountIdentityModeCache';
+import {setCachedEmailDeliveryState} from '@app/api/instance/AccountsConfigCache';
 import {getCachedInstancePremiumMode, setCachedInstancePremiumMode} from '@app/api/limits/InstancePremiumModeCache';
 import {getBillingRepository} from '@app/api/middleware/ServiceRegistry';
 import {getUserRepository} from '@app/api/middleware/ServiceSingletons';
@@ -26,10 +28,14 @@ import {server} from '@app/api/test/msw/server';
 import {createTestWorkerHelpers} from '@app/api/test/SyncTaskWorkerService';
 import {HTTP_STATUS} from '@app/api/test/TestConstants';
 import {createBuilder} from '@app/api/test/TestRequestBuilder';
+import {fetchUserMe} from '@app/api/user/tests/UserTestUtils';
 import {getCurrencyPreferences, getGiftCurrencyPreferences, isLocalizedCurrency} from '@app/api/utils/CurrencyUtils';
 import processStripeWebhook from '@app/api/worker/tasks/ProcessStripeWebhook';
 import {setWorkerDependenciesForTest} from '@app/api/worker/WorkerContext';
+import {EmailDeliveryStates} from '@fluxer/constants/src/AccountConfigConstants';
+import {AccountIdentityModes, TagStyles} from '@fluxer/constants/src/AccountIdentityConstants';
 import {APIErrorCodes} from '@fluxer/constants/src/ApiErrorCodes';
+import {PremiumFlags, UserPremiumTypes} from '@fluxer/constants/src/UserConstants';
 import type {PremiumStateResponse, PriceIdsResponse} from '@fluxer/schema/src/domains/premium/PremiumSchemas';
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, test} from 'vitest';
 
@@ -80,6 +86,7 @@ function operatorBilling(overrides: Partial<StoredBillingConfig> = {}): StoredBi
 		automatic_tax: null,
 		tax_id_collection: null,
 		terms_consent_required: null,
+		billing_emails: null,
 		default_currency: 'GBP',
 		prices: OPERATOR_PRICES,
 		country_currencies: {SE: 'SEK', CH: 'CHF'},
@@ -229,16 +236,52 @@ describe('operator billing catalog', () => {
 			setStoredBillingConfig(operatorBilling({terms_consent_required: false, automatic_tax: false}));
 			const token = await createPurchaser();
 			await createBuilder(harness, token)
+				.post('/stripe/checkout/subscription')
+				.body({price_id: 'price_envmonthlyusd', client_geoip_country_code: 'SE'})
+				.expect(HTTP_STATUS.OK)
+				.execute();
+			const session = stripeHandlers.spies.createdCheckoutSessions[0];
+			expect(session?.line_items?.[0]?.price).toBe('price_envmonthlyusd');
+			expect(session?.custom_text?.terms_of_service_acceptance?.message).toContain('Fluxer Plutonium');
+			expect(session?.consent_collection?.terms_of_service).toBe('required');
+			expect(sessionField(session, 'automatic_tax')).toEqual({enabled: 'true'});
+			expect(sessionField(session, 'tax_id_collection')).toEqual({enabled: 'true'});
+		});
+
+		test('charges no tax on a gift checkout, because a gift code is a multi-purpose voucher', async () => {
+			const token = await createPurchaser();
+			await createBuilder(harness, token)
 				.post('/stripe/checkout/gift')
 				.body({price_id: 'price_envgiftmonthusd'})
 				.expect(HTTP_STATUS.OK)
 				.execute();
 			const session = stripeHandlers.spies.createdCheckoutSessions[0];
-			expect(session?.line_items?.[0]?.price).toBe('price_envgiftmonthusd');
-			expect(session?.custom_text?.terms_of_service_acceptance?.message).toContain('Fluxer Plutonium');
-			expect(session?.consent_collection?.terms_of_service).toBe('required');
-			expect(sessionField(session, 'automatic_tax')).toEqual({enabled: 'true'});
+			expect(sessionField(session, 'automatic_tax')).toEqual({enabled: 'false'});
 			expect(sessionField(session, 'tax_id_collection')).toEqual({enabled: 'true'});
+			expect(session?.line_items).toEqual([{price: 'price_envgiftmonthusd', quantity: '1'}]);
+		});
+
+		test('asks for a billing address on a gift or subscription checkout only when the buyer says it is for a business', async () => {
+			const token = await createPurchaser();
+			await createBuilder(harness, token)
+				.post('/stripe/checkout/gift')
+				.body({price_id: 'price_envgiftmonthusd'})
+				.expect(HTTP_STATUS.OK)
+				.execute();
+			await createBuilder(harness, token)
+				.post('/stripe/checkout/gift')
+				.body({price_id: 'price_envgiftmonthusd', is_business: true})
+				.expect(HTTP_STATUS.OK)
+				.execute();
+			await createBuilder(harness, token)
+				.post('/stripe/checkout/subscription')
+				.body({price_id: 'price_envmonthlyusd'})
+				.expect(HTTP_STATUS.OK)
+				.execute();
+			const [consumerGift, businessGift, subscription] = stripeHandlers.spies.createdCheckoutSessions;
+			expect(consumerGift?.billing_address_collection).toBe('auto');
+			expect(businessGift?.billing_address_collection).toBe('required');
+			expect(subscription?.billing_address_collection).toBe('auto');
 		});
 
 		test('leaves a premium checkout at the lifetime Stripe gives it by default', async () => {
@@ -493,13 +536,70 @@ describe('operator billing catalog', () => {
 			const token = await createPurchaser();
 			await createBuilder(harness, token)
 				.post('/stripe/checkout/gift')
-				.body({price_id: 'price_opgbpgiftmonth'})
+				.body({price_id: 'price_opgbpgiftmonth', client_geoip_country_code: 'DE'})
 				.expect(HTTP_STATUS.OK)
 				.execute();
 			const message =
 				stripeHandlers.spies.createdCheckoutSessions[0]?.custom_text?.terms_of_service_acceptance?.message;
 			expect(message).toContain('Premium');
 			expect(message).not.toContain('Plutonium');
+			expect(stripeHandlers.spies.createdCheckoutSessions[0]?.payment_method_types).toBeUndefined();
+		});
+
+		test('blocks checkout for an account with the purchases limit but lets it redeem a gift', async () => {
+			const token = await createPurchaser();
+			const {json: me} = await fetchUserMe(harness, token);
+			const user = await getUserRepository().findUniqueAssert(createUserID(BigInt(me.id)));
+			const code = `limit${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`;
+			await createBuilder(harness, token)
+				.post(`/test/gifts/${code}`)
+				.body({duration_type: 'months', duration_quantity: 1, created_by_user_id: me.id})
+				.execute();
+			await getUserRepository().patchUpsert(user.id, {premium_flags: PremiumFlags.PURCHASE_DISABLED}, user.toRow());
+			await createBuilder(harness, token)
+				.post('/stripe/checkout/subscription')
+				.body({price_id: 'price_opgbpmonthly'})
+				.expect(HTTP_STATUS.FORBIDDEN, APIErrorCodes.PREMIUM_PURCHASE_BLOCKED)
+				.execute();
+			await createBuilder(harness, token)
+				.post('/stripe/checkout/gift')
+				.body({price_id: 'price_opgbpgiftmonth'})
+				.expect(HTTP_STATUS.FORBIDDEN, APIErrorCodes.PREMIUM_PURCHASE_BLOCKED)
+				.execute();
+			expect(stripeHandlers.spies.createdCheckoutSessions).toHaveLength(0);
+			await createBuilder(harness, token).post(`/gifts/${code}/redeem`).expect(HTTP_STATUS.NO_CONTENT).execute();
+			expect((await getUserRepository().findUniqueAssert(user.id)).premiumType).toBe(UserPremiumTypes.SUBSCRIPTION);
+		});
+
+		test('lets an account without an email buy on a username instance and leaves the email to checkout', async () => {
+			const account = await createAccount();
+			const user = await getUserRepository().findUniqueAssert(createUserID(BigInt(account.userId)));
+			await getUserRepository().patchUpsert(user.id, {email: null, email_verified: false}, user.toRow());
+			setCachedAccountIdentity({mode: AccountIdentityModes.USERNAME, tagStyle: TagStyles.NONE});
+			setCachedEmailDeliveryState(EmailDeliveryStates.OFF_DISABLED);
+			try {
+				await createBuilder<{url: string}>(harness, account.token)
+					.post('/stripe/checkout/gift')
+					.body({price_id: 'price_opgbpgiftmonth'})
+					.expect(HTTP_STATUS.OK)
+					.execute();
+				await createBuilder<{url: string}>(harness, account.token)
+					.post('/stripe/checkout/subscription')
+					.body({price_id: 'price_opgbpmonthly'})
+					.expect(HTTP_STATUS.OK)
+					.execute();
+			} finally {
+				setCachedAccountIdentity(null);
+				setCachedEmailDeliveryState(null);
+			}
+			const sessions = stripeHandlers.spies.createdCheckoutSessions;
+			expect(sessions.map((session) => session.mode)).toEqual(['payment', 'subscription']);
+			const customerId = (await getUserRepository().findUniqueAssert(user.id)).stripeCustomerId;
+			expect(customerId).toBeTruthy();
+			for (const session of sessions) {
+				expect(session.customer).toBe(customerId);
+				expect(session.customer_email).toBeUndefined();
+			}
 		});
 	});
 

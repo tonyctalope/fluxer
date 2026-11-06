@@ -76,6 +76,7 @@ interface DiscoveryGuildResult {
 	member_count: number;
 	online_count: number;
 	features: Array<string>;
+	badge_ids: Array<string>;
 	verification_level: number;
 }
 
@@ -363,6 +364,7 @@ export class GuildDiscoveryService {
 		if (
 			status?.status !== DiscoveryApplicationStatus.APPROVED ||
 			!guild ||
+			guild.nsfw ||
 			guild.features.has(GuildFeatures.INVITES_DISABLED) ||
 			!channel ||
 			channel.guildId !== guildId ||
@@ -375,9 +377,9 @@ export class GuildDiscoveryService {
 		const permissions = computeGuildVisitorChannelPermissions({
 			guildId: guildId.toString(),
 			everyonePermissions: everyoneRole.permissions,
-			guildNsfw: false,
+			guildNsfw: guild.nsfw,
 			channel: channelToVisitorInput(channel),
-			adultContentAllowed: true,
+			adultContentAllowed: false,
 		});
 		if ((permissions & GUILD_VISITOR_PERMISSIONS_MASK) !== GUILD_VISITOR_PERMISSIONS_MASK) {
 			throw new DiscoveryNotDiscoverableError();
@@ -440,6 +442,7 @@ export class GuildDiscoveryService {
 			member_count: hit.memberCount,
 			online_count: 0,
 			features: hit.features,
+			badge_ids: hit.badgeIds ?? [],
 			verification_level: getEffectiveGuildVerificationLevel(hit.verificationLevel, hit.isDiscoverable),
 		}));
 		const total = results.total;
@@ -450,6 +453,9 @@ export class GuildDiscoveryService {
 				for (const guild of guilds) {
 					const counts = freshCounts.get(BigInt(guild.id) as GuildID);
 					if (counts) {
+						if (counts.memberCount > 0) {
+							guild.member_count = counts.memberCount;
+						}
 						guild.online_count = counts.onlineCount;
 					}
 				}

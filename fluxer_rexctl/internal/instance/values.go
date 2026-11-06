@@ -3,6 +3,7 @@
 package instance
 
 import (
+	"errors"
 	"maps"
 	"slices"
 	"strconv"
@@ -50,7 +51,7 @@ func importValues(in valueInput) (*valueResult, error) {
 		admin:    map[string]string{},
 	}
 	for k := range env {
-		if strings.HasPrefix(k, "COMPOSE_") {
+		if strings.HasPrefix(k, "COMPOSE_") || k == stack.SettingsLoadedVar {
 			delete(env, k)
 		}
 	}
@@ -75,7 +76,7 @@ func importValues(in valueInput) (*valueResult, error) {
 			r.defaults = append(r.defaults, k)
 			continue
 		}
-		if ex, ok := in.examples[k]; ok && ex == v && !isGeneratedSecret(k) {
+		if ex, ok := in.examples[k]; ok && ex == v && !isGeneratedSecret(k) && isPlaceholderValue(v) {
 			r.placeholders = append(r.placeholders, k)
 		}
 	}
@@ -130,12 +131,19 @@ func importValues(in valueInput) (*valueResult, error) {
 		}
 	}
 
+	var conflict *settings.ListenConflict
+	if _, err := settings.SplitListenAddress(r.settings, nil); errors.As(err, &conflict) {
+		return nil, &AdoptError{Msg: "FLUXER_HTTP_PORT and FLUXER_HTTPS_PORT in .env use different addresses, and rexctl runs Fluxer on one address for both.", Fix: "Give FLUXER_HTTP_PORT and FLUXER_HTTPS_PORT in .env the same address, then run rexctl takeover again."}
+	}
+
 	for _, o := range in.overlays {
 		switch o {
 		case stack.OverlayProxy, stack.OverlayTunnel:
 			r.settings[settings.EdgeMode] = string(o)
 		case stack.OverlayIPv6:
 			r.settings[settings.IPv6] = "true"
+		case stack.OverlayExternalVoice:
+			r.settings[settings.VoiceBundled] = "false"
 		}
 	}
 	if err := dropRedundant(in.set, r); err != nil {
@@ -166,7 +174,7 @@ func preserve(set *stack.Set, r *valueResult, before map[string]string, read []s
 		}
 		changed := false
 		for _, v := range read {
-			if named[v] || isGeneratedSecret(v) || settings.Twins[v] != "" || isProxyVar(v) {
+			if named[v] || v == stack.SettingsLoadedVar || isGeneratedSecret(v) || settings.Twins[v] != "" || isProxyVar(v) {
 				continue
 			}
 			b, a := before[v], after[v]
@@ -232,6 +240,11 @@ func equalsDefault(defs []string, v string, env map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func isPlaceholderValue(v string) bool {
+	lower := strings.ToLower(strings.TrimSpace(v))
+	return strings.Contains(lower, "example.") || lower == "change_me" || lower == "changeme"
 }
 
 func isGeneratedSecret(name string) bool {

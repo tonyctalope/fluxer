@@ -44,8 +44,9 @@ func (e *PostgresMajorError) Error() string {
 func (e *PostgresMajorError) Is(target error) bool { return target == ErrPostgresMajor }
 
 type imageList struct {
-	Release string   `json:"release"`
-	Images  []string `json:"images"`
+	Release string            `json:"release"`
+	Images  []string          `json:"images"`
+	Sizes   map[string]uint64 `json:"sizes,omitempty"`
 }
 
 func DirName(version string) string {
@@ -154,7 +155,7 @@ func Restore(inst *instance.Instance, version string) (*Restored, error) {
 	if len(saved.Images.Refs) == 0 && Valid(version) {
 		return nil, fmt.Errorf("release: the snapshot of %s records no images", version)
 	}
-	r, err := stack.Render(set, stack.OverlaysFor(saved.Settings), saved.Images.Refs, inst.Project(), inst.Dir)
+	r, err := inst.Render(set, stack.OverlaysFor(saved.Settings), saved.Images.Refs)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +213,7 @@ func MissingFiles(inst *instance.Instance) []string {
 	}
 	var out []string
 	for _, name := range expectedFiles(inst) {
-		if _, err := os.Lstat(filepath.Join(inst.Dir, name)); errors.Is(err, fs.ErrNotExist) {
+		if _, err := os.Lstat(inst.Generated(name)); errors.Is(err, fs.ErrNotExist) {
 			out = append(out, name)
 		}
 	}
@@ -269,10 +270,10 @@ func RestoreMissing(inst *instance.Instance) ([]string, error) {
 			return nil, err
 		}
 		defer os.RemoveAll(tmp)
-		if _, err := stack.Render(set, stack.OverlaysFor(inst.State.Settings), inst.State.Images.Refs, inst.Project(), tmp); err != nil {
+		if _, err := stack.RenderAt(set, stack.OverlaysFor(inst.State.Settings), inst.State.Images.Refs, inst.Project(), tmp, inst.OldLayout()); err != nil {
 			return nil, err
 		}
-		source = os.DirFS(tmp)
+		source = os.DirFS(stack.FilesDir(tmp, inst.OldLayout()))
 	}
 	var restored []string
 	for _, name := range missing {
@@ -280,7 +281,10 @@ func RestoreMissing(inst *instance.Instance) ([]string, error) {
 		if err != nil || len(data) == 0 {
 			continue
 		}
-		if err := writeFile(filepath.Join(inst.Dir, name), data, false); err != nil {
+		if set.Release == stack.LegacyRelease && !inst.OldLayout() {
+			data = stack.Managed(name, data)
+		}
+		if err := writeFile(inst.Generated(name), data, false); err != nil {
 			return restored, err
 		}
 		if inst.State.Rendered == nil {
@@ -326,16 +330,43 @@ func writeImages(dir, version string, refs []string) error {
 	return writeFile(filepath.Join(dir, imagesFile), append(data, '\n'), private(version))
 }
 
-func Images(inst *instance.Instance, version string) ([]string, error) {
+func readImages(inst *instance.Instance, version string) (imageList, error) {
+	var list imageList
 	data, err := os.ReadFile(filepath.Join(Dir(inst, version), imagesFile))
+	if err != nil {
+		return list, err
+	}
+	err = json.Unmarshal(data, &list)
+	return list, err
+}
+
+func Images(inst *instance.Instance, version string) ([]string, error) {
+	list, err := readImages(inst, version)
 	if err != nil {
 		return nil, err
 	}
-	var list imageList
-	if err := json.Unmarshal(data, &list); err != nil {
-		return nil, err
-	}
 	return list.Images, nil
+}
+
+func ImageSizes(inst *instance.Instance, version string) map[string]uint64 {
+	list, _ := readImages(inst, version)
+	return list.Sizes
+}
+
+func RecordImageSizes(inst *instance.Instance, version string, sizes map[string]uint64) error {
+	list, err := readImages(inst, version)
+	if err != nil {
+		return err
+	}
+	if list.Sizes == nil {
+		list.Sizes = map[string]uint64{}
+	}
+	maps.Copy(list.Sizes, sizes)
+	data, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFile(filepath.Join(Dir(inst, version), imagesFile), append(data, '\n'), private(version))
 }
 
 func KeptImages(inst *instance.Instance) []string {
@@ -373,17 +404,48 @@ func CheckPostgres(fromRef, toRef string) error {
 	return nil
 }
 
-func Prune(ctx context.Context, inst *instance.Instance, e *engine.Engine) error {
+func OnlyIn(inst *instance.Instance, version string, keep ...string) []string {
+	refs, err := Images(inst, version)
+	if err != nil {
+		return nil
+	}
+	kept := map[string]bool{}
+	for _, r := range inst.State.Images.Refs {
+		kept[r] = true
+	}
+	for _, v := range keep {
+		other, _ := Images(inst, v)
+		for _, r := range other {
+			kept[r] = true
+		}
+	}
+	var out []string
+	for _, r := range refs {
+		if !kept[r] && !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func PruneOlder(ctx context.Context, inst *instance.Instance, e *engine.Engine) error {
+	remove, err := pruneReleases(inst)
+	if err != nil || len(remove) == 0 || e == nil {
+		return err
+	}
+	return e.RemoveImages(ctx, remove)
+}
+
+func pruneReleases(inst *instance.Instance) ([]string, error) {
 	root := inst.Path(instance.StateDirName, instance.ReleasesDir)
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	keep := map[string]bool{
-		stack.LegacyRelease:                 true,
 		DirName(inst.State.Release):         true,
 		DirName(inst.State.PreviousRelease): true,
 	}
@@ -391,24 +453,16 @@ func Prune(ctx context.Context, inst *instance.Instance, e *engine.Engine) error
 		keep[DirName(u.From)] = true
 		keep[DirName(u.To)] = true
 	}
-	var versions []string
-	for _, d := range entries {
-		if d.IsDir() && d.Name() != stack.LegacyRelease {
-			versions = append(versions, d.Name())
-		}
-	}
-	sort.Slice(versions, func(i, j int) bool { return Compare(versions[i], versions[j]) > 0 })
-	for i, v := range versions {
-		if i < instance.KeepReleases {
-			keep[v] = true
-		}
-	}
 	kept := map[string]bool{}
 	for _, r := range inst.State.Images.Refs {
 		kept[r] = true
 	}
 	var drop []string
-	for _, v := range append(versions, stack.LegacyRelease) {
+	for _, d := range entries {
+		if !d.IsDir() {
+			continue
+		}
+		v := d.Name()
 		refs, _ := Images(inst, v)
 		if keep[v] {
 			for _, r := range refs {
@@ -417,8 +471,16 @@ func Prune(ctx context.Context, inst *instance.Instance, e *engine.Engine) error
 			continue
 		}
 		drop = append(drop, refs...)
-		if err := removeAll(filepath.Join(root, v)); err != nil {
-			return err
+		if v == stack.LegacyRelease {
+			err = os.Remove(filepath.Join(root, v, imagesFile))
+			if errors.Is(err, fs.ErrNotExist) {
+				err = nil
+			}
+		} else {
+			err = removeAll(filepath.Join(root, v))
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	var remove []string
@@ -429,10 +491,7 @@ func Prune(ctx context.Context, inst *instance.Instance, e *engine.Engine) error
 			remove = append(remove, r)
 		}
 	}
-	if len(remove) == 0 || e == nil {
-		return nil
-	}
-	return e.RemoveImages(ctx, remove)
+	return remove, nil
 }
 
 func removeAll(dir string) error {

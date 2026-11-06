@@ -28,6 +28,7 @@ export interface WallEventDraft {
 	releaseYear?: number | null;
 	releaseTag?: string | null;
 	passCount?: number | null;
+	firstPassAt?: Date | null;
 }
 
 interface WallMutation {
@@ -48,30 +49,22 @@ function emptyEntry(userId: UserID, now: Date): OperatorPassWallEntryRow {
 	return {
 		user_id: userId,
 		name: null,
+		quote: null,
 		opted_out: true,
 		keep_as_is: false,
 		release_list_opt_in: false,
 		hidden: false,
 		legal_hold: false,
 		left_wall_at: null,
-		username_declined: false,
 		live_revision_id: null,
 		live_name: null,
 		live_avatar: null,
 		live_business: null,
-		pending_revision_id: null,
 		pending_name: null,
-		pending_avatar: null,
-		pending_source: null,
-		pending_since: null,
-		declined_revision_id: null,
 		declined_name: null,
-		declined_avatar: null,
 		decline_reason: null,
 		decline_note: null,
 		decline_statement_id: null,
-		reviewed_at: null,
-		reviewed_by: null,
 		listed_at: null,
 		delivered_at: null,
 		release_published_year: null,
@@ -115,7 +108,6 @@ export class OperatorPassWallEntryStore {
 			reason?: OperatorPassWallDeclineReason | null;
 			note?: string | null;
 			statementId?: string | null;
-			usernameDeclined?: boolean;
 		},
 	): Promise<OperatorPassWallDecisionRow> {
 		const decision: OperatorPassWallDecisionRow = {
@@ -128,7 +120,6 @@ export class OperatorPassWallEntryStore {
 			reason: params.reason ?? null,
 			note: params.note ?? null,
 			statement_id: params.statementId ?? null,
-			username_declined: params.usernameDeclined ?? null,
 		};
 		await this.repository.appendWallDecision(decision);
 		return decision;
@@ -171,9 +162,6 @@ export class OperatorPassWallEntryStore {
 				continue;
 			}
 			this.invalidate();
-			if ((existing?.pending_revision_id != null) !== (next.pending_revision_id != null)) {
-				await this.repository.setWallPending(userId, next.pending_revision_id != null);
-			}
 			for (const event of mutation.events) {
 				await this.appendEvent(userId, now, event, actorId);
 			}
@@ -197,6 +185,7 @@ export class OperatorPassWallEntryStore {
 			release_tag: event.releaseTag ?? null,
 			actor_id: actorId,
 			pass_count: event.passCount ?? null,
+			first_pass_at: event.firstPassAt ?? null,
 		});
 	}
 

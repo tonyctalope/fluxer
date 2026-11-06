@@ -45,6 +45,22 @@ func FreeDisk(path string) (uint64, error) {
 	return st.Bavail * uint64(st.Bsize), nil
 }
 
+func DiskSize(path string) (uint64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(existingParent(path), &st); err != nil {
+		return 0, err
+	}
+	return st.Blocks * uint64(st.Bsize), nil
+}
+
+func DiskID(path string) (string, error) {
+	var st syscall.Stat_t
+	if err := syscall.Stat(existingParent(path), &st); err != nil {
+		return "", err
+	}
+	return strconv.FormatUint(st.Dev, 10), nil
+}
+
 func addrInUse(err error) bool { return errors.Is(err, syscall.EADDRINUSE) }
 
 func portInUse(proto string, port int) (bool, string, error) {

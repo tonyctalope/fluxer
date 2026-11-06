@@ -4,8 +4,9 @@ use crate::templates::pages::instance_config::ConfigForm;
 use crate::{
     api::types::{
         AppPublicConfigResponse, BRANDING_ASSET_ACCEPT, BRANDING_ASSET_MAX_IMAGE_CHARS,
-        BrandingAssetKind, CUSTOM_CSS_MAX_CHARS,
+        BRANDING_BACKDROP_ACCEPT, BrandingAssetKind, CUSTOM_CSS_MAX_CHARS,
     },
+    config::AdminConfig,
     templates::components::form::{
         Checkbox, FORM_LABEL_CLASS, FORM_TEXTAREA_CLASS, form_actions, submit_button, text_input,
         textarea_input,
@@ -16,6 +17,7 @@ use maud::{Markup, PreEscaped, html};
 
 pub const CUSTOM_CSS_FIELD: &str = "app_custom_css";
 pub const UPLOAD_LIMIT_MESSAGE_FIELD: &str = "app_upload_limit_message";
+pub const TRUSTED_DOMAINS_FIELD: &str = "app_trusted_domains";
 
 const FLUXER_LOGO_SVG: &str = include_str!("../../../static/fluxer-logo-color.svg");
 const FLUXER_WORDMARK_SVG: &str = include_str!("../../../static/fluxer-wordmark.svg");
@@ -65,21 +67,40 @@ fn asset_guidance(kind: BrandingAssetKind) -> AssetGuidance {
             help: "Browsers set to a dark theme show this instead of the favicon. Add one when your favicon is too dark to see on a dark tab. Use a square PNG, at least 64 by 64 pixels and up to 10 MB.",
             empty: "If you leave it empty, the tab shows the same favicon in light and dark themes.",
         },
+        BrandingAssetKind::PremiumShowcaseExpressions => AssetGuidance {
+            help: "Shows next to \"Your emojis, everywhere\" on the premium page. Use a JPEG, PNG, WebP or AVIF between 480 and 2400 pixels on each side, up to 4 MB. A landscape image around 1100 by 800 pixels fits best.",
+            empty: PREMIUM_SHOWCASE_EMPTY,
+        },
+        BrandingAssetKind::PremiumShowcaseProfile => AssetGuidance {
+            help: "Shows next to \"A profile that stands out\" on the premium page. Use a JPEG, PNG, WebP or AVIF between 480 and 2400 pixels on each side, up to 4 MB. A landscape image around 1100 by 800 pixels fits best.",
+            empty: PREMIUM_SHOWCASE_EMPTY,
+        },
+        BrandingAssetKind::PremiumShowcaseStream => AssetGuidance {
+            help: "Shows next to \"Stream in 4K at 60 FPS\" on the premium page. Use a JPEG, PNG, WebP or AVIF between 480 and 2400 pixels on each side, up to 4 MB. A landscape image around 1100 by 800 pixels fits best.",
+            empty: PREMIUM_SHOWCASE_EMPTY,
+        },
+        BrandingAssetKind::PremiumShowcaseUpload => AssetGuidance {
+            help: "Shows next to the card about file size limits on the premium page. Use a JPEG, PNG, WebP or AVIF between 480 and 2400 pixels on each side, up to 4 MB. A landscape image around 1100 by 800 pixels fits best.",
+            empty: PREMIUM_SHOWCASE_EMPTY,
+        },
     }
 }
 
+const PREMIUM_SHOWCASE_EMPTY: &str = "If you leave it empty, this card shows text only.";
+
 pub(super) fn branding_section(
-    base: &str,
+    config: &AdminConfig,
     config_form: ConfigForm<'_>,
     app_public: &AppPublicConfigResponse,
     host: &str,
 ) -> Markup {
+    let base = &config.base_path;
     html! {
         form method="post" action={(base) "/instance-config?action=update_app_public"} data-branding-form {
             (config_form.fields())
             div class="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,27rem)_minmax(0,1fr)] xl:items-start" {
                 div class="min-w-0 xl:sticky xl:top-6 xl:col-start-2 xl:row-start-1" {
-                    (branding_preview(host))
+                    (branding_preview(host, &config.image_origins()))
                 }
                 div class="min-w-0 space-y-6 xl:col-start-1 xl:row-start-1" {
                     div class="flex flex-col gap-2" {
@@ -107,13 +128,16 @@ pub(super) fn branding_section(
                     div class="space-y-4 border-t border-neutral-200 pt-6" {
                         h3 class="text-sm font-semibold text-neutral-900" { "Images" }
                         @for kind in ASSET_ORDER {
-                            (branding_asset_field(kind, kind.url(&app_public.branding)))
+                            (branding_asset_field(config, kind, kind.url(&app_public.branding)))
                         }
+                    }
+                    @if config.self_hosted {
+                        (premium_page_fields(config, app_public))
                     }
                     div class="flex flex-col gap-2 border-t border-neutral-200 pt-6" {
                         (custom_css_field(app_public.branding.custom_css.as_deref().unwrap_or("")))
                         p class="text-xs leading-5 text-neutral-500" {
-                            "Applies to every page of the web and desktop app, the sign-in pages included, for everyone on this instance. Each person's own theme and custom CSS load after it and can override it. Class names can change between releases, so prefer the color variables on :root."
+                            "Applies to the web and desktop app for everyone on this instance, except on sign-in pages and in security dialogs. The desktop app loads images and fonts for it only from this instance, Google Fonts and coolLabs Fonts. Each person's own theme and custom CSS load after it and can override it. Use the color variables on :root where you can, because class names can change between releases."
                         }
                     }
                     div class="flex flex-col gap-2 border-t border-neutral-200 pt-6" {
@@ -129,19 +153,37 @@ pub(super) fn branding_section(
                             "Shows when someone picks a file over their upload limit, in place of \"This limit is configured by your instance administrator.\" Markdown links work. Up to 500 characters. Leave it empty to keep the default sentence."
                         }
                     }
-                    div class="grid grid-cols-1 gap-4 border-t border-neutral-200 pt-6 sm:grid-cols-2" {
-                        (text_input(
-                            "app_status_page_url",
-                            "Status page URL",
-                            app_public.branding.status_page_url.as_deref().unwrap_or(""),
-                            "https://fluxerstatus.com",
+                    div class="flex flex-col gap-2 border-t border-neutral-200 pt-6" {
+                        (textarea_input(
+                            TRUSTED_DOMAINS_FIELD,
+                            "Trusted link domains",
+                            "example.com\n*.example.com",
+                            &app_public.branding.trusted_domains.join("\n"),
+                            3,
+                            false,
                         ))
-                        (text_input(
-                            "app_status_page_incident_history_url",
-                            "Status page history URL",
-                            app_public.branding.status_page_incident_history_url.as_deref().unwrap_or(""),
-                            "https://fluxerstatus.com/history",
-                        ))
+                        p class="text-xs leading-5 text-neutral-500" {
+                            "Links to these domains open without the external link warning for everyone on this instance. Put one domain on each line, up to 50. Start a line with *. to also cover its subdomains, as in *.example.com. Your instance's own addresses are always trusted."
+                        }
+                    }
+                    div class="flex flex-col gap-2 border-t border-neutral-200 pt-6" {
+                        div class="grid grid-cols-1 gap-4 sm:grid-cols-2" {
+                            (text_input(
+                                "app_status_page_url",
+                                "Status page URL",
+                                app_public.branding.status_page_url.as_deref().unwrap_or(""),
+                                "https://fluxerstatus.com",
+                            ))
+                            (text_input(
+                                "app_status_page_incident_history_url",
+                                "Status page history URL",
+                                app_public.branding.status_page_incident_history_url.as_deref().unwrap_or(""),
+                                "https://fluxerstatus.com/history",
+                            ))
+                        }
+                        p class="text-xs leading-5 text-neutral-500" {
+                            "The web app links to the status page when loading takes a long time. Fluxer checks whether it is an Instatus page. If it is, the web app also reads its current incidents and maintenance automatically. Pages from other providers are only linked."
+                        }
                     }
                     div class="space-y-2" {
                         (Checkbox {
@@ -166,6 +208,28 @@ pub(super) fn branding_section(
         script { (PreEscaped(BRANDING_ASSET_SCRIPT)) }
         script { (PreEscaped(BRANDING_PREVIEW_SCRIPT)) }
         script { (PreEscaped(CUSTOM_CSS_COUNT_SCRIPT)) }
+    }
+}
+
+fn premium_page_fields(config: &AdminConfig, app_public: &AppPublicConfigResponse) -> Markup {
+    html! {
+        div class="space-y-4 border-t border-neutral-200 pt-6" {
+            h3 class="text-sm font-semibold text-neutral-900" { "Premium page" }
+            div class="flex flex-col gap-2" {
+                (text_input(
+                    "app_premium_page_color",
+                    "Premium page color (hex)",
+                    app_public.branding.premium_page_color.as_deref().unwrap_or(""),
+                    "#4641d9",
+                ))
+                p class="text-xs leading-5 text-neutral-500" {
+                    "Recolors the premium page with this hue. The page keeps its own light and dark shades, so a light color shows up darker than the one you enter. A gray color makes the page gray. Text keeps the same contrast as with the default colors, so it stays easy to read. Leave it empty to keep the default colors."
+                }
+            }
+            @for kind in BrandingAssetKind::PREMIUM_SHOWCASE {
+                (branding_asset_field(config, kind, kind.url(&app_public.branding)))
+            }
+        }
     }
 }
 
@@ -206,7 +270,11 @@ pub fn branding_asset_field_id(kind: BrandingAssetKind) -> String {
     format!("branding-asset-{}", kind.as_str())
 }
 
-pub fn branding_asset_field(kind: BrandingAssetKind, url: Option<&str>) -> Markup {
+pub fn branding_asset_field(
+    config: &AdminConfig,
+    kind: BrandingAssetKind,
+    url: Option<&str>,
+) -> Markup {
     let name = format!("app_{}_url", kind.as_str());
     let placeholder = match kind {
         BrandingAssetKind::Favicon => "https://example.com/favicon.ico".to_owned(),
@@ -214,10 +282,19 @@ pub fn branding_asset_field(kind: BrandingAssetKind, url: Option<&str>) -> Marku
         _ => format!("https://example.com/{}.png", kind.as_str()),
     };
     let guidance = asset_guidance(kind);
-    let thumbnail_class = if kind == BrandingAssetKind::SignInBackdrop {
+    let failed_note = match url {
+        Some(url) if config.shows_image(url) => UNLOADABLE_IMAGE_NOTE,
+        _ => UNPREVIEWABLE_IMAGE_NOTE,
+    };
+    let thumbnail_class = if kind.is_photo() {
         "h-16 w-28"
     } else {
         "h-16 w-16"
+    };
+    let accept = if kind.is_photo() {
+        BRANDING_BACKDROP_ACCEPT
+    } else {
+        BRANDING_ASSET_ACCEPT
     };
     html! {
         div id=(branding_asset_field_id(kind))
@@ -234,14 +311,14 @@ pub fn branding_asset_field(kind: BrandingAssetKind, url: Option<&str>) -> Marku
                     @if let Some(url) = url {
                         img src=(url) alt={(kind.label()) " preview"}
                             onerror=(THUMBNAIL_ONERROR)
-                            class={"max-h-full max-w-full " (if kind == BrandingAssetKind::SignInBackdrop { "h-full w-full object-cover" } else { "object-contain" })};
+                            class={"max-h-full max-w-full " (if kind.is_photo() { "h-full w-full object-cover" } else { "object-contain" })};
                         span class="h-6 w-6 text-neutral-400" data-branding-asset-placeholder hidden {
                             (PreEscaped(IMAGE_PLACEHOLDER_SVG))
                         }
                     }
                 }
                 div class="flex flex-wrap items-center gap-2" {
-                    input type="file" accept=(BRANDING_ASSET_ACCEPT) class="hidden"
+                    input type="file" accept=(accept) class="hidden"
                         data-branding-asset-file
                         aria-label={"Upload " (kind.label())};
                     button type="button" data-branding-asset-upload
@@ -260,17 +337,20 @@ pub fn branding_asset_field(kind: BrandingAssetKind, url: Option<&str>) -> Marku
                 p class="text-xs leading-5 text-neutral-500" { (guidance.empty) }
             } @else {
                 p class="text-xs leading-5 text-neutral-500" data-branding-asset-unpreviewable hidden {
-                    (UNPREVIEWABLE_IMAGE_NOTE)
+                    (failed_note)
                 }
             }
-            (text_input(&name, &format!("{} URL", kind.label()), url.unwrap_or(""), &placeholder))
+            @if !kind.is_premium_showcase() {
+                (text_input(&name, &format!("{} URL", kind.label()), url.unwrap_or(""), &placeholder))
+            }
         }
     }
 }
 
-fn branding_preview(host: &str) -> Markup {
+fn branding_preview(host: &str, image_origins: &[String]) -> Markup {
+    let image_origins = serde_json::to_string(image_origins).unwrap_or_else(|_| "[]".to_owned());
     html! {
-        div class="bp-root" data-branding-preview {
+        div class="bp-root" data-branding-preview data-bp-image-origins=(image_origins) {
             div class="bp-tabs" role="tablist" aria-label="Preview" {
                 button type="button" role="tab" class="bp-tab" aria-selected="true" data-bp-tab="sign_in" { "Sign-in page" }
                 button type="button" role="tab" class="bp-tab" aria-selected="false" tabindex="-1" data-bp-tab="phone" { "Phone" }
@@ -278,6 +358,7 @@ fn branding_preview(host: &str) -> Markup {
                 button type="button" role="tab" class="bp-tab" aria-selected="false" tabindex="-1" data-bp-tab="instances" { "Instance list" }
             }
             p class="bp-note" data-bp="unpreviewable-note" hidden { (UNPREVIEWABLE_PREVIEW_NOTE) }
+            p class="bp-note" data-bp="unloadable-note" hidden { (UNLOADABLE_PREVIEW_NOTE) }
             div class="bp-stage" {
                 div role="tabpanel" data-bp-panel="sign_in" {
                     div class="bp-computer" aria-hidden="true" {
@@ -421,6 +502,12 @@ fn titlebar_group(title: &str, macos: bool) -> Markup {
 
 const UNPREVIEWABLE_IMAGE_NOTE: &str = "This image can't be previewed here. The admin panel only shows images stored on this instance.";
 
+const UNLOADABLE_IMAGE_NOTE: &str =
+    "This image could not be loaded from this instance. Try uploading it again.";
+
+const UNLOADABLE_PREVIEW_NOTE: &str =
+    "Some images could not be loaded from this instance, so a gray square stands in for them.";
+
 const UNPREVIEWABLE_PREVIEW_NOTE: &str = "Some images can't be previewed here. The admin panel only shows images stored on this instance, so a gray square stands in for them.";
 
 const THUMBNAIL_ONERROR: &str = "this.hidden=true;this.closest('[data-branding-asset]').querySelectorAll('[data-branding-asset-placeholder],[data-branding-asset-unpreviewable]').forEach(function(el){el.hidden=false})";
@@ -444,7 +531,7 @@ const BRANDING_PREVIEW_STYLE: &str = r#"
 .bp-tab:hover{color:#18181b}
 .bp-tab[aria-selected="true"]{background:#fff;color:#18181b;box-shadow:0 1px 2px rgb(0 0 0/.08)}
 .bp-tab:focus-visible{outline:2px solid #4641d9;outline-offset:1px}
-@media (prefers-color-scheme:dark){.bp-tabs{background:#27272a;border-color:#3f3f46}.bp-tab{color:#a1a1aa}.bp-tab:hover{color:#fafafa}.bp-tab[aria-selected="true"]{background:#3f3f46;color:#fafafa;box-shadow:none}.bp-tab:focus-visible{outline-color:#8b87ff}.bp-note,.bp-caption{color:#a1a1aa}.bp-computer{border-color:#3f3f46}}
+[data-theme="dark"] .bp-tabs{background:#27272a;border-color:#3f3f46}[data-theme="dark"] .bp-tab{color:#a1a1aa}[data-theme="dark"] .bp-tab:hover{color:#fafafa}[data-theme="dark"] .bp-tab[aria-selected="true"]{background:#3f3f46;color:#fafafa;box-shadow:none}[data-theme="dark"] .bp-tab:focus-visible{outline-color:#8b87ff}[data-theme="dark"] .bp-note,[data-theme="dark"] .bp-caption{color:#a1a1aa}[data-theme="dark"] .bp-computer{border-color:#3f3f46}
 .bp-stage{min-width:0}
 .bp-note{margin:0;font-size:12px;line-height:1.5;color:#71717a}
 .bp-caption{margin:10px 0 0;font-size:12px;line-height:1.5;color:#71717a}
@@ -577,12 +664,14 @@ const BRANDING_PREVIEW_SCRIPT: &str = r#"
 				if (img.getAttribute('data-bp-src') !== url) {
 					img.setAttribute('data-bp-src', url);
 					img.removeAttribute('data-bp-unpreviewable');
+					img.removeAttribute('data-bp-unloadable');
 					img.setAttribute('src', url);
 				}
 				img.hidden = false;
 			} else {
 				img.removeAttribute('data-bp-src');
 				img.removeAttribute('data-bp-unpreviewable');
+				img.removeAttribute('data-bp-unloadable');
 				img.removeAttribute('src');
 				img.hidden = true;
 			}
@@ -591,12 +680,29 @@ const BRANDING_PREVIEW_SCRIPT: &str = r#"
 	function showUnpreviewableNote() {
 		var root = document.querySelector('[data-branding-preview]');
 		show('[data-bp="unpreviewable-note"]', Boolean(root && root.querySelector('img[data-bp-unpreviewable]:not([hidden])')));
+		show('[data-bp="unloadable-note"]', Boolean(root && root.querySelector('img[data-bp-unloadable]:not([hidden])')));
+	}
+	function isInstanceImage(url) {
+		var root = document.querySelector('[data-branding-preview]');
+		var origins = [];
+		try {
+			origins = JSON.parse((root && root.getAttribute('data-bp-image-origins')) || '[]');
+		} catch (error) {
+			origins = [];
+		}
+		try {
+			var parsed = new URL(url, window.location.href);
+			if (parsed.protocol === 'data:' || parsed.protocol === 'blob:') return true;
+			return parsed.origin === window.location.origin || origins.indexOf(parsed.origin) !== -1;
+		} catch (error) {
+			return false;
+		}
 	}
 	function markUnpreviewable(event) {
 		var img = event.target;
 		if (!(img instanceof HTMLImageElement) || !img.hasAttribute('data-bp-src') || !img.closest('[data-branding-preview]')) return;
-		if (img.hasAttribute('data-bp-unpreviewable')) return;
-		img.setAttribute('data-bp-unpreviewable', '');
+		if (img.hasAttribute('data-bp-unpreviewable') || img.hasAttribute('data-bp-unloadable')) return;
+		img.setAttribute(isInstanceImage(img.getAttribute('data-bp-src')) ? 'data-bp-unloadable' : 'data-bp-unpreviewable', '');
 		img.setAttribute('src', PLACEHOLDER);
 		showUnpreviewableNote();
 	}

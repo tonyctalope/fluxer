@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{InstanceBillingResponse, InstanceBillingUpdateRequest};
+use super::{
+    DistributionPricingResponse, DistributionPricingUpdateRequest, InstanceBillingResponse,
+    InstanceBillingUpdateRequest,
+};
 use crate::api::generated::types as generated_types;
 
 pub use generated_types::{
@@ -50,12 +53,15 @@ pub struct InstanceConfigResponse {
     pub experiment_delivery: ExperimentDeliveryConfigResponse,
     #[serde(default)]
     pub billing: InstanceBillingResponse,
+    pub distribution_pricing: DistributionPricingResponse,
     pub auth: AuthConfigResponse,
     pub accounts: AccountsConfigResponse,
     #[serde(default)]
     pub guild_visits: GuildVisitsConfigResponse,
     #[serde(default)]
     pub notice: Option<InstanceNoticeResponse>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -138,6 +144,7 @@ pub struct AccountIdentitySettings {
     pub mode: AccountIdentityMode,
     pub tag_style: TagStyle,
     pub emails_enabled: bool,
+    pub username_from_provider: bool,
 }
 
 impl Default for AccountIdentitySettings {
@@ -146,11 +153,16 @@ impl Default for AccountIdentitySettings {
             mode: AccountIdentityMode::default(),
             tag_style: TagStyle::default(),
             emails_enabled: true,
+            username_from_provider: false,
         }
     }
 }
 
 impl AccountIdentitySettings {
+    pub fn sso_manages_usernames(self) -> bool {
+        self.username_from_provider && self.mode.is_username()
+    }
+
     pub fn admin_reset_links_available(self) -> bool {
         self.mode.is_username() || !self.emails_enabled
     }
@@ -160,6 +172,14 @@ impl AccountIdentitySettings {
 pub struct InstanceAccountIdentityDiscovery {
     #[serde(default)]
     pub features: InstanceAccountIdentityDiscoveryFeatures,
+    #[serde(default)]
+    pub sso: InstanceSsoDiscovery,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct InstanceSsoDiscovery {
+    #[serde(default)]
+    pub username_from_provider: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -184,6 +204,8 @@ pub struct InstancePolicyResponse {
     #[serde(default)]
     pub friends_disabled: bool,
     #[serde(default)]
+    pub personal_notes_enabled: bool,
+    #[serde(default)]
     pub premium_mode: PremiumMode,
     #[serde(default = "default_guild_create_access")]
     pub guild_create_access: bool,
@@ -207,6 +229,7 @@ impl Default for InstancePolicyResponse {
             direct_messages_disabled: false,
             direct_messages_locked: false,
             friends_disabled: false,
+            personal_notes_enabled: false,
             premium_mode: PremiumMode::Everyone,
             guild_create_access: default_guild_create_access(),
             services: InstanceServicesOverrides::default(),
@@ -444,9 +467,21 @@ pub struct AppBrandingConfigResponse {
     pub premium_product_name: String,
     pub premium_info_url: Option<String>,
     pub sign_in_backdrop_url: Option<String>,
+    #[serde(default)]
+    pub premium_page_color: Option<String>,
+    #[serde(default)]
+    pub premium_showcase_expressions_url: Option<String>,
+    #[serde(default)]
+    pub premium_showcase_profile_url: Option<String>,
+    #[serde(default)]
+    pub premium_showcase_stream_url: Option<String>,
+    #[serde(default)]
+    pub premium_showcase_upload_url: Option<String>,
     pub custom_css: Option<String>,
     #[serde(default)]
     pub upload_limit_message: Option<String>,
+    #[serde(default)]
+    pub trusted_domains: Vec<String>,
 }
 
 impl Default for AppBrandingConfigResponse {
@@ -465,8 +500,14 @@ impl Default for AppBrandingConfigResponse {
             premium_product_name: default_premium_product_name(),
             premium_info_url: None,
             sign_in_backdrop_url: None,
+            premium_page_color: None,
+            premium_showcase_expressions_url: None,
+            premium_showcase_profile_url: None,
+            premium_showcase_stream_url: None,
+            premium_showcase_upload_url: None,
             custom_css: None,
             upload_limit_message: None,
+            trusted_domains: Vec::new(),
         }
     }
 }
@@ -515,6 +556,8 @@ pub struct SsoConfigResponse {
     pub allowed_domains: Vec<String>,
     #[serde(default)]
     pub auto_provision: bool,
+    #[serde(default)]
+    pub username_from_provider: bool,
     pub redirect_uri: Option<String>,
     #[serde(default)]
     pub groups_claim: Option<String>,
@@ -849,6 +892,9 @@ pub const BRANDING_ASSET_ACCEPT: &str = ".png,.jpeg,.webp,.gif,.apng,.avif,.heic
      image/png,image/jpeg,image/webp,image/gif,image/apng,image/avif,image/heic,image/heif,\
      image/jxl,image/svg+xml";
 
+pub const BRANDING_BACKDROP_ACCEPT: &str =
+    ".png,.jpg,.jpeg,.webp,.avif,image/png,image/jpeg,image/webp,image/avif";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BrandingAssetKind {
@@ -859,10 +905,14 @@ pub enum BrandingAssetKind {
     Favicon,
     FaviconDark,
     SignInBackdrop,
+    PremiumShowcaseExpressions,
+    PremiumShowcaseProfile,
+    PremiumShowcaseStream,
+    PremiumShowcaseUpload,
 }
 
 impl BrandingAssetKind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 11] = [
         Self::Icon,
         Self::Symbol,
         Self::Logo,
@@ -870,6 +920,17 @@ impl BrandingAssetKind {
         Self::Favicon,
         Self::FaviconDark,
         Self::SignInBackdrop,
+        Self::PremiumShowcaseExpressions,
+        Self::PremiumShowcaseProfile,
+        Self::PremiumShowcaseStream,
+        Self::PremiumShowcaseUpload,
+    ];
+
+    pub const PREMIUM_SHOWCASE: [Self; 4] = [
+        Self::PremiumShowcaseExpressions,
+        Self::PremiumShowcaseProfile,
+        Self::PremiumShowcaseStream,
+        Self::PremiumShowcaseUpload,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -881,6 +942,10 @@ impl BrandingAssetKind {
             Self::Favicon => "favicon",
             Self::FaviconDark => "favicon_dark",
             Self::SignInBackdrop => "sign_in_backdrop",
+            Self::PremiumShowcaseExpressions => "premium_showcase_expressions",
+            Self::PremiumShowcaseProfile => "premium_showcase_profile",
+            Self::PremiumShowcaseStream => "premium_showcase_stream",
+            Self::PremiumShowcaseUpload => "premium_showcase_upload",
         }
     }
 
@@ -897,6 +962,10 @@ impl BrandingAssetKind {
             Self::Favicon => "Favicon",
             Self::FaviconDark => "Dark mode favicon",
             Self::SignInBackdrop => "Sign-in background",
+            Self::PremiumShowcaseExpressions => "Emoji card image",
+            Self::PremiumShowcaseProfile => "Profile card image",
+            Self::PremiumShowcaseStream => "Stream card image",
+            Self::PremiumShowcaseUpload => "Upload card image",
         }
     }
 
@@ -909,7 +978,21 @@ impl BrandingAssetKind {
             Self::Favicon => branding.favicon_url.as_deref(),
             Self::FaviconDark => branding.favicon_dark_url.as_deref(),
             Self::SignInBackdrop => branding.sign_in_backdrop_url.as_deref(),
+            Self::PremiumShowcaseExpressions => {
+                branding.premium_showcase_expressions_url.as_deref()
+            }
+            Self::PremiumShowcaseProfile => branding.premium_showcase_profile_url.as_deref(),
+            Self::PremiumShowcaseStream => branding.premium_showcase_stream_url.as_deref(),
+            Self::PremiumShowcaseUpload => branding.premium_showcase_upload_url.as_deref(),
         }
+    }
+
+    pub fn is_premium_showcase(self) -> bool {
+        Self::PREMIUM_SHOWCASE.contains(&self)
+    }
+
+    pub fn is_photo(self) -> bool {
+        self == Self::SignInBackdrop || self.is_premium_showcase()
     }
 }
 
@@ -948,6 +1031,8 @@ pub struct InstanceConfigUpdateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub billing: Option<InstanceBillingUpdateRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub distribution_pricing: Option<DistributionPricingUpdateRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthConfigUpdateRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accounts: Option<AccountsConfigUpdateRequest>,
@@ -973,6 +1058,8 @@ pub struct InstancePolicyUpdateRequest {
     pub direct_messages_locked: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub friends_disabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub personal_notes_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guild_create_access: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1143,9 +1230,13 @@ pub struct AppBrandingConfigUpdateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sign_in_backdrop_url: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub premium_page_color: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_css: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upload_limit_message: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trusted_domains: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -1205,11 +1296,15 @@ pub struct SsoConfigUpdateRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_provision: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub username_from_provider: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_uri: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub groups_claim: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_role_mappings: Option<Vec<SsoGroupRoleMapping>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migrate_identities: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

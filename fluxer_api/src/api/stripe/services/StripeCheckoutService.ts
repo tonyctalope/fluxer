@@ -11,8 +11,21 @@ import {assertNoOpenPaymentDispute} from '@app/api/payment_disputes/PaymentDispu
 import type {StoreEntitlementService} from '@app/api/store_billing/StoreEntitlementService';
 import {getBillingBranding} from '@app/api/stripe/BillingBranding';
 import {getEffectiveBillingConfig, isCurrentCatalogPriceId} from '@app/api/stripe/BillingConfigCache';
+import type {DistributionPriceSync} from '@app/api/stripe/DistributionPriceSync';
+import {
+	applyDistributionToQuote,
+	type DistributionSale,
+	decodeDistributionPurchaseRef,
+	distributionMetadata,
+	distributionPaymentFields,
+	distributionProductOf,
+	distributionSaleFromEntry,
+	parseDistributionId,
+	resolveDistributionRule,
+} from '@app/api/stripe/DistributionPricing';
 import type {ProductInfo, ProductRegistry} from '@app/api/stripe/ProductRegistry';
 import {ensureStripeCustomer, isStripeResourceMissingError} from '@app/api/stripe/StripeCustomer';
+import {getPortalConfigurationId} from '@app/api/stripe/StripePortalConfiguration';
 import {getCachedStripePriceSummary, type StripePriceSummary} from '@app/api/stripe/StripePriceSummaryCache';
 import {
 	canProvisionPremiumFromSubscriptionStatus,
@@ -39,7 +52,6 @@ import {StripeInvalidProductConfigurationError} from '@fluxer/errors/src/domains
 import {StripeInvalidProductError} from '@fluxer/errors/src/domains/payment/StripeInvalidProductError';
 import {StripeNoPurchaseHistoryError} from '@fluxer/errors/src/domains/payment/StripeNoPurchaseHistoryError';
 import {StripePaymentNotAvailableError} from '@fluxer/errors/src/domains/payment/StripePaymentNotAvailableError';
-import {PurchaseReceiptEmailRequiredError} from '@fluxer/errors/src/domains/user/PurchaseReceiptEmailRequiredError';
 import {UnclaimedAccountCannotMakePurchasesError} from '@fluxer/errors/src/domains/user/UnclaimedAccountCannotMakePurchasesError';
 import {UnknownUserError} from '@fluxer/errors/src/domains/user/UnknownUserError';
 import type {FluxerError} from '@fluxer/errors/src/FluxerError';
@@ -48,7 +60,7 @@ import type {PriceIdsResponse} from '@fluxer/schema/src/domains/premium/PremiumS
 import type {ICacheService} from '@pkgs/cache/src/ICacheService';
 import type Stripe from 'stripe';
 
-export const EU_WITHDRAWAL_WAIVER_TEXT_VERSION = '2026-10-12';
+export const EU_WITHDRAWAL_WAIVER_TEXT_VERSION = '2026-10-30-pro-rata';
 
 type CheckoutSessionCreateParams = Stripe.Checkout.SessionCreateParams;
 type CheckoutSessionMode = CheckoutSessionCreateParams['mode'];
@@ -89,6 +101,9 @@ export interface CreateCheckoutSessionParams {
 	euWithdrawalWaiverAccepted?: boolean;
 	paymentMethod?: CheckoutPaymentMethod;
 	isBusiness?: boolean;
+	cnpj?: string;
+	distribution?: string;
+	distributionToken?: string;
 }
 
 const PIX_UPI_MANDATE_HEADROOM_MULTIPLIER = 1.25;
@@ -107,20 +122,80 @@ interface EuWithdrawalWaiverContext {
 const PURCHASE_BLOCKED_ERRORS: Record<PurchaseBlockedReason, () => FluxerError> = {
 	[PurchaseBlockedReasons.UNCLAIMED]: () => new UnclaimedAccountCannotMakePurchasesError(),
 	[PurchaseBlockedReasons.EMAIL_UNVERIFIED]: () => new PurchaseEmailVerificationRequiredError(),
-	[PurchaseBlockedReasons.NO_RECEIPT_EMAIL]: () => new PurchaseReceiptEmailRequiredError(),
 };
 
-export function assertUserCanPurchase(
-	user: User,
-	{needsReceiptEmail = true}: {needsReceiptEmail?: boolean} = {},
-): void {
+export function assertUserCanPurchase(user: User): void {
 	const eligibility = resolvePurchaseEligibility(user);
-	if (!eligibility.allowed && (needsReceiptEmail || eligibility.blocked !== PurchaseBlockedReasons.NO_RECEIPT_EMAIL)) {
+	if (!eligibility.allowed) {
 		throw PURCHASE_BLOCKED_ERRORS[eligibility.blocked]();
 	}
 	if (user.premiumFlags & PremiumFlags.PURCHASE_DISABLED) {
 		throw new PremiumPurchaseBlockedError('purchase_disabled');
 	}
+}
+
+function termsAcceptanceMessage(
+	countryCode: string | null,
+	gift: boolean,
+	locale: string | null,
+	branding: {productName: string; premiumName: string; termsUrl: string},
+): string {
+	const terms = {
+		product_name: branding.productName,
+		premium_tier_name: branding.premiumName,
+		terms_url: branding.termsUrl,
+	};
+	const proRata = countryCode === 'GB' || isEuEeaCountryCode(countryCode);
+	if (proRata && gift) {
+		return getContentMessage('billing.withdrawal_gift_checkout_pro_rata', locale, terms);
+	}
+	if (countryCode === 'GB') {
+		return getContentMessage('billing.uk_withdrawal_checkout', locale, terms);
+	}
+	if (proRata) {
+		return getContentMessage('billing.eu_withdrawal_checkout_pro_rata', locale, terms);
+	}
+	return getContentMessage('billing.terms_checkout', locale, {terms_url: branding.termsUrl});
+}
+
+function checkoutCustomText({
+	termsConsentRequired,
+	countryCode,
+	brazilConsumer,
+	renews,
+	gift,
+	locale,
+	branding,
+}: {
+	termsConsentRequired: boolean;
+	countryCode: string | null;
+	brazilConsumer: boolean;
+	renews: boolean;
+	gift: boolean;
+	locale: string | null;
+	branding: {productName: string; premiumName: string; termsUrl: string};
+}): Pick<CheckoutSessionCreateParams, 'custom_text'> {
+	const acceptance = termsConsentRequired
+		? {message: termsAcceptanceMessage(brazilConsumer ? null : countryCode, gift, locale, branding)}
+		: null;
+	const submit =
+		brazilConsumer && !Config.instance.selfHosted
+			? {
+					message: getContentMessage(
+						renews ? 'billing.brazil_withdrawal_checkout_subscription_v2' : 'billing.brazil_withdrawal_checkout_v2',
+						locale,
+					),
+				}
+			: null;
+	if (!acceptance && !submit) {
+		return {};
+	}
+	return {
+		custom_text: {
+			...(acceptance ? {terms_of_service_acceptance: acceptance} : {}),
+			...(submit ? {submit} : {}),
+		},
+	};
 }
 
 export class StripeCheckoutService {
@@ -130,11 +205,12 @@ export class StripeCheckoutService {
 		private productRegistry: ProductRegistry,
 		private cacheService: ICacheService,
 		private storeEntitlementService: StoreEntitlementService | null = null,
+		private distributionPriceSync: DistributionPriceSync | null = null,
 	) {}
 
 	async createCheckoutSession({
 		userId,
-		priceId,
+		priceId: requestedPriceId,
 		isGift = false,
 		countryCode,
 		clientGeoipCountryCode,
@@ -142,14 +218,25 @@ export class StripeCheckoutService {
 		euWithdrawalWaiverAccepted,
 		paymentMethod = 'card',
 		isBusiness = false,
+		cnpj,
+		distribution,
+		distributionToken,
 	}: CreateCheckoutSessionParams): Promise<string> {
+		const basePriceId = this.productRegistry.getBasePriceId(requestedPriceId);
 		const {customerId, productInfo, user} = await this.prepareCheckoutContext({
 			userId,
-			priceId,
+			priceId: basePriceId,
 			isGift,
 			countryCode,
 			purchaseGeoipCountryCode,
 		});
+		const distributionSale = await this.resolveDistributionSale({
+			productInfo,
+			basePriceId,
+			distribution,
+			distributionToken,
+		});
+		const priceId = distributionSale?.priceId ?? basePriceId;
 		const isRecurringSubscription = this.productRegistry.isRecurringSubscription(productInfo);
 		const checkoutMode: CheckoutSessionMode = isRecurringSubscription ? 'subscription' : 'payment';
 		const effectivePaymentMethod =
@@ -167,20 +254,25 @@ export class StripeCheckoutService {
 			purchaseGeoipCountryCode,
 			euWithdrawalWaiverAccepted,
 		});
-		const paymentMethodOptions = await this.buildPaymentMethodOptions({
-			productInfo,
-			checkoutMode,
-			paymentMethod: effectivePaymentMethod,
-			priceId,
-		});
+		const paymentMethodOptions = isGift
+			? undefined
+			: await this.buildPaymentMethodOptions({
+					productInfo,
+					checkoutMode,
+					paymentMethod: effectivePaymentMethod,
+					priceId,
+				});
 		const paymentMethodTypes = this.resolvePaymentMethodTypes(effectivePaymentMethod);
 		const branding = await getBillingBranding();
 		const billing = getEffectiveBillingConfig();
+		const brazil = waiverContext.effectiveCountryCode === 'BR' || productInfo.currency === 'BRL';
+		const brazilBusiness = brazil && isBusiness && cnpj !== undefined;
 		const checkoutMetadata = {
 			user_id: userId.toString(),
 			price_id: priceId,
 			product_type: productInfo.type,
 			is_gift: isGift ? 'true' : 'false',
+			is_business: isBusiness ? 'true' : 'false',
 			...(countryCode ? {country_code: countryCode.toUpperCase()} : {}),
 			...(purchaseGeoipCountryCode ? {purchase_geoip_country_code: purchaseGeoipCountryCode.toUpperCase()} : {}),
 			...(clientGeoipCountryCode ? {purchase_client_country_code: clientGeoipCountryCode.toUpperCase()} : {}),
@@ -188,28 +280,26 @@ export class StripeCheckoutService {
 			eu_withdrawal_waiver_accepted: waiverContext.accepted ? 'true' : 'false',
 			...(waiverContext.acceptedAt ? {eu_withdrawal_waiver_accepted_at: waiverContext.acceptedAt.toISOString()} : {}),
 			eu_withdrawal_waiver_text_version: EU_WITHDRAWAL_WAIVER_TEXT_VERSION,
+			...(brazil ? {withdrawal_country: 'BR'} : {}),
+			...(brazilBusiness ? {cnpj} : {}),
+			...(billing.termsConsentRequired && !brazil && waiverContext.required ? {withdrawal_pro_rata: 'true'} : {}),
 			payment_method: effectivePaymentMethod,
+			...(distributionSale ? distributionMetadata(distributionSale.sale) : {}),
 		};
 		const checkoutParams: CheckoutSessionCreateParams = {
 			customer: customerId,
 			client_reference_id: userId.toString(),
 			metadata: checkoutMetadata,
-			...(billing.termsConsentRequired
-				? {
-						consent_collection: {
-							terms_of_service: 'required',
-						},
-						custom_text: {
-							terms_of_service_acceptance: {
-								message: getContentMessage('billing.eu_withdrawal_waiver_checkout', user.locale, {
-									product_name: branding.productName,
-									premium_tier_name: branding.premiumName,
-									terms_url: branding.termsUrl,
-								}),
-							},
-						},
-					}
-				: {}),
+			...(billing.termsConsentRequired ? {consent_collection: {terms_of_service: 'required'}} : {}),
+			...checkoutCustomText({
+				termsConsentRequired: billing.termsConsentRequired,
+				countryCode: waiverContext.effectiveCountryCode,
+				brazilConsumer: brazil && !brazilBusiness,
+				renews: isRecurringSubscription,
+				gift: isGift,
+				locale: user.locale,
+				branding,
+			}),
 			line_items: [
 				{
 					price: priceId,
@@ -219,15 +309,8 @@ export class StripeCheckoutService {
 			mode: checkoutMode,
 			success_url: `${Config.endpoints.webApp}/premium-callback?status=success`,
 			cancel_url: `${Config.endpoints.webApp}/premium-callback?status=cancel`,
-			...(checkoutMode === 'payment'
-				? {
-						invoice_creation: {
-							enabled: true,
-						},
-					}
-				: {}),
 			automatic_tax: {
-				enabled: billing.automaticTax,
+				enabled: billing.automaticTax && !isGift,
 			},
 			tax_id_collection: {
 				enabled: billing.taxIdCollection,
@@ -238,7 +321,7 @@ export class StripeCheckoutService {
 			},
 			billing_address_collection: isBusiness ? 'required' : 'auto',
 			allow_promotion_codes: true,
-			...(shouldDisableAdaptivePricing(productInfo.currency) ? {adaptive_pricing: {enabled: false}} : {}),
+			...(shouldDisableAdaptivePricing() ? {adaptive_pricing: {enabled: false}} : {}),
 			...(checkoutMode === 'subscription'
 				? {
 						subscription_data: {
@@ -262,7 +345,30 @@ export class StripeCheckoutService {
 			clientGeoipCountryCode,
 			purchaseGeoipCountryCode,
 			waiverContext,
+			distributionSale: distributionSale?.sale ?? null,
 		});
+	}
+
+	private async resolveDistributionSale({
+		productInfo,
+		basePriceId,
+		distribution,
+		distributionToken,
+	}: {
+		productInfo: ProductInfo;
+		basePriceId: string;
+		distribution: string | undefined;
+		distributionToken: string | undefined;
+	}): Promise<{priceId: string; sale: DistributionSale} | null> {
+		const rule = resolveDistributionRule(parseDistributionId(distribution), distributionProductOf(productInfo));
+		if (!rule || !this.distributionPriceSync) {
+			return null;
+		}
+		const entry = await this.distributionPriceSync.ensureChannelPrice(rule, basePriceId);
+		return {
+			priceId: entry.price_id,
+			sale: distributionSaleFromEntry(rule, entry, decodeDistributionPurchaseRef(distributionToken)),
+		};
 	}
 
 	private async prepareCheckoutContext({
@@ -347,6 +453,7 @@ export class StripeCheckoutService {
 		clientGeoipCountryCode,
 		purchaseGeoipCountryCode,
 		waiverContext,
+		distributionSale,
 	}: {
 		checkoutParams: CheckoutSessionCreateParams;
 		productInfo: ProductInfo;
@@ -356,6 +463,7 @@ export class StripeCheckoutService {
 		clientGeoipCountryCode?: string | null;
 		purchaseGeoipCountryCode?: string | null;
 		waiverContext: EuWithdrawalWaiverContext;
+		distributionSale: DistributionSale | null;
 	}): Promise<string> {
 		if (!this.stripe) {
 			throw new StripePaymentNotAvailableError();
@@ -380,6 +488,7 @@ export class StripeCheckoutService {
 				eu_withdrawal_waiver_accepted: waiverContext.accepted,
 				eu_withdrawal_waiver_accepted_at: waiverContext.acceptedAt,
 				eu_withdrawal_waiver_text_version: waiverContext.required ? EU_WITHDRAWAL_WAIVER_TEXT_VERSION : null,
+				...distributionPaymentFields(distributionSale),
 			});
 			Logger.debug({userId, sessionId: session.id, productType: productInfo.type}, 'Checkout session created');
 			return session.url;
@@ -404,7 +513,7 @@ export class StripeCheckoutService {
 		const normalizedPricingCountryCode = this.normalizeCountryCode(countryCode);
 		const effectiveCountryCode =
 			normalizedPurchaseCountryCode ?? normalizedClientCountryCode ?? normalizedPricingCountryCode ?? null;
-		const required = isEuEeaCountryCode(effectiveCountryCode);
+		const required = isEuEeaCountryCode(effectiveCountryCode) || effectiveCountryCode === 'GB';
 		return {
 			accepted: required && euWithdrawalWaiverAccepted === true,
 			acceptedAt: required && euWithdrawalWaiverAccepted === true ? new Date() : null,
@@ -604,6 +713,7 @@ export class StripeCheckoutService {
 		try {
 			const session = await this.stripe.billingPortal.sessions.create({
 				customer: customerId,
+				configuration: await getPortalConfigurationId(this.stripe),
 				return_url: `${Config.endpoints.webApp}/premium-callback?status=closed-billing-portal`,
 			});
 			if (!session.url) {
@@ -618,7 +728,7 @@ export class StripeCheckoutService {
 		}
 	}
 
-	async getPriceIds(countryCode?: string): Promise<PriceIdsResponse> {
+	async getPriceIds(countryCode?: string, distribution?: string): Promise<PriceIdsResponse> {
 		const resolvedPrices = this.productRegistry.resolveLocalizedPriceIds(countryCode);
 		if (!resolvedPrices) throw new StripeError('Stripe price ids missing for supported currencies');
 		const [monthlyPrice, yearlyPrice, gift1MonthPrice, gift1YearPrice] = await Promise.all([
@@ -627,13 +737,17 @@ export class StripeCheckoutService {
 			this.getStripePriceSummary(resolvedPrices.gift_1_month),
 			this.getStripePriceSummary(resolvedPrices.gift_1_year),
 		]);
-		return {
-			...resolvedPrices,
-			monthly_amount_minor: monthlyPrice?.unitAmountMinor ?? null,
-			yearly_amount_minor: yearlyPrice?.unitAmountMinor ?? null,
-			gift_1_month_amount_minor: gift1MonthPrice?.unitAmountMinor ?? null,
-			gift_1_year_amount_minor: gift1YearPrice?.unitAmountMinor ?? null,
-		};
+		return applyDistributionToQuote(
+			{
+				...resolvedPrices,
+				monthly_amount_minor: monthlyPrice?.unitAmountMinor ?? null,
+				yearly_amount_minor: yearlyPrice?.unitAmountMinor ?? null,
+				gift_1_month_amount_minor: gift1MonthPrice?.unitAmountMinor ?? null,
+				gift_1_year_amount_minor: gift1YearPrice?.unitAmountMinor ?? null,
+				distribution: null,
+			},
+			distribution,
+		);
 	}
 
 	private async getStripePriceSummary(priceId: string | null): Promise<StripePriceSummary | null> {

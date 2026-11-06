@@ -113,6 +113,10 @@ const (
 	AssetPurge                    AdminAclType = "asset:purge"
 	Asterisk                      AdminAclType = "*"
 	AuditLogView                  AdminAclType = "audit_log:view"
+	BadgeCreate                   AdminAclType = "badge:create"
+	BadgeDelete                   AdminAclType = "badge:delete"
+	BadgeList                     AdminAclType = "badge:list"
+	BadgeUpdate                   AdminAclType = "badge:update"
 	BanAvatarHashAdd              AdminAclType = "ban:avatar_hash:add"
 	BanAvatarHashCheck            AdminAclType = "ban:avatar_hash:check"
 	BanAvatarHashRemove           AdminAclType = "ban:avatar_hash:remove"
@@ -159,6 +163,7 @@ const (
 	GuildReload                   AdminAclType = "guild:reload"
 	GuildShutdown                 AdminAclType = "guild:shutdown"
 	GuildTransferOwnership        AdminAclType = "guild:transfer_ownership"
+	GuildUpdateBadges             AdminAclType = "guild:update:badges"
 	GuildUpdateFeatures           AdminAclType = "guild:update:features"
 	GuildUpdateName               AdminAclType = "guild:update:name"
 	GuildUpdateSettings           AdminAclType = "guild:update:settings"
@@ -173,7 +178,6 @@ const (
 	MessageDeleteAll              AdminAclType = "message:delete_all"
 	MessageLookup                 AdminAclType = "message:lookup"
 	MessageShred                  AdminAclType = "message:shred"
-	OperatorPassWaitlistStats     AdminAclType = "operator_pass:waitlist_stats"
 	RegistrationReview            AdminAclType = "registration:review"
 	ReportDelete                  AdminAclType = "report:delete"
 	ReportResolve                 AdminAclType = "report:resolve"
@@ -191,6 +195,7 @@ const (
 	UserLookup                    AdminAclType = "user:lookup"
 	UserRemoveRelationship        AdminAclType = "user:remove:relationship"
 	UserTempBan                   AdminAclType = "user:temp_ban"
+	UserUpdateBadges              AdminAclType = "user:update:badges"
 	UserUpdateBotStatus           AdminAclType = "user:update:bot_status"
 	UserUpdateDob                 AdminAclType = "user:update:dob"
 	UserUpdateEmail               AdminAclType = "user:update:email"
@@ -203,6 +208,9 @@ const (
 	UserViewDob                   AdminAclType = "user:view:dob"
 	UserViewEmail                 AdminAclType = "user:view:email"
 	UserViewIp                    AdminAclType = "user:view:ip"
+	VoiceJoinTokenCreate          AdminAclType = "voice:join_token:create"
+	VoiceJoinTokenList            AdminAclType = "voice:join_token:list"
+	VoiceJoinTokenRevoke          AdminAclType = "voice:join_token:revoke"
 	VoiceRegionCreate             AdminAclType = "voice:region:create"
 	VoiceRegionDelete             AdminAclType = "voice:region:delete"
 	VoiceRegionList               AdminAclType = "voice:region:list"
@@ -239,6 +247,14 @@ func (e AdminAclType) Valid() bool {
 	case Asterisk:
 		return true
 	case AuditLogView:
+		return true
+	case BadgeCreate:
+		return true
+	case BadgeDelete:
+		return true
+	case BadgeList:
+		return true
+	case BadgeUpdate:
 		return true
 	case BanAvatarHashAdd:
 		return true
@@ -332,6 +348,8 @@ func (e AdminAclType) Valid() bool {
 		return true
 	case GuildTransferOwnership:
 		return true
+	case GuildUpdateBadges:
+		return true
 	case GuildUpdateFeatures:
 		return true
 	case GuildUpdateName:
@@ -359,8 +377,6 @@ func (e AdminAclType) Valid() bool {
 	case MessageLookup:
 		return true
 	case MessageShred:
-		return true
-	case OperatorPassWaitlistStats:
 		return true
 	case RegistrationReview:
 		return true
@@ -396,6 +412,8 @@ func (e AdminAclType) Valid() bool {
 		return true
 	case UserTempBan:
 		return true
+	case UserUpdateBadges:
+		return true
 	case UserUpdateBotStatus:
 		return true
 	case UserUpdateDob:
@@ -419,6 +437,12 @@ func (e AdminAclType) Valid() bool {
 	case UserViewEmail:
 		return true
 	case UserViewIp:
+		return true
+	case VoiceJoinTokenCreate:
+		return true
+	case VoiceJoinTokenList:
+		return true
+	case VoiceJoinTokenRevoke:
 		return true
 	case VoiceRegionCreate:
 		return true
@@ -461,13 +485,17 @@ func (e BillingCatalogModeSchema) Valid() bool {
 
 // Defines values for BrandingAssetUploadRequestKind.
 const (
-	Favicon        BrandingAssetUploadRequestKind = "favicon"
-	FaviconDark    BrandingAssetUploadRequestKind = "favicon_dark"
-	Icon           BrandingAssetUploadRequestKind = "icon"
-	Logo           BrandingAssetUploadRequestKind = "logo"
-	SignInBackdrop BrandingAssetUploadRequestKind = "sign_in_backdrop"
-	Symbol         BrandingAssetUploadRequestKind = "symbol"
-	Wordmark       BrandingAssetUploadRequestKind = "wordmark"
+	Favicon                    BrandingAssetUploadRequestKind = "favicon"
+	FaviconDark                BrandingAssetUploadRequestKind = "favicon_dark"
+	Icon                       BrandingAssetUploadRequestKind = "icon"
+	Logo                       BrandingAssetUploadRequestKind = "logo"
+	PremiumShowcaseExpressions BrandingAssetUploadRequestKind = "premium_showcase_expressions"
+	PremiumShowcaseProfile     BrandingAssetUploadRequestKind = "premium_showcase_profile"
+	PremiumShowcaseStream      BrandingAssetUploadRequestKind = "premium_showcase_stream"
+	PremiumShowcaseUpload      BrandingAssetUploadRequestKind = "premium_showcase_upload"
+	SignInBackdrop             BrandingAssetUploadRequestKind = "sign_in_backdrop"
+	Symbol                     BrandingAssetUploadRequestKind = "symbol"
+	Wordmark                   BrandingAssetUploadRequestKind = "wordmark"
 )
 
 // Valid indicates whether the value is a known member of the BrandingAssetUploadRequestKind enum.
@@ -480,6 +508,14 @@ func (e BrandingAssetUploadRequestKind) Valid() bool {
 	case Icon:
 		return true
 	case Logo:
+		return true
+	case PremiumShowcaseExpressions:
+		return true
+	case PremiumShowcaseProfile:
+		return true
+	case PremiumShowcaseStream:
+		return true
+	case PremiumShowcaseUpload:
 		return true
 	case SignInBackdrop:
 		return true
@@ -675,6 +711,24 @@ func (e DeletionReasonCode) Valid() bool {
 	case DeletionReasonCodeUSERREQUESTED:
 		return true
 	case DeletionReasonCodeVIOLENTEXTREMISM:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DistributionProductSchema.
+const (
+	PlutoniumGift         DistributionProductSchema = "plutonium_gift"
+	PlutoniumSubscription DistributionProductSchema = "plutonium_subscription"
+)
+
+// Valid indicates whether the value is a known member of the DistributionProductSchema enum.
+func (e DistributionProductSchema) Valid() bool {
+	switch e {
+	case PlutoniumGift:
+		return true
+	case PlutoniumSubscription:
 		return true
 	default:
 		return false
@@ -1214,11 +1268,12 @@ func (e InstanceRegistrationModeSchema) Valid() bool {
 
 // Defines values for InstantAccountAvailabilitySchema.
 const (
-	APPROVALREQUIRED   InstantAccountAvailabilitySchema = "approval_required"
-	AVAILABLE          InstantAccountAvailabilitySchema = "available"
-	CAPTCHAOFF         InstantAccountAvailabilitySchema = "captcha_off"
-	DISABLED           InstantAccountAvailabilitySchema = "disabled"
-	REGISTRATIONCLOSED InstantAccountAvailabilitySchema = "registration_closed"
+	APPROVALREQUIRED       InstantAccountAvailabilitySchema = "approval_required"
+	AVAILABLE              InstantAccountAvailabilitySchema = "available"
+	CAPTCHAOFF             InstantAccountAvailabilitySchema = "captcha_off"
+	DISABLED               InstantAccountAvailabilitySchema = "disabled"
+	EMAILDOMAINSRESTRICTED InstantAccountAvailabilitySchema = "email_domains_restricted"
+	REGISTRATIONCLOSED     InstantAccountAvailabilitySchema = "registration_closed"
 )
 
 // Valid indicates whether the value is a known member of the InstantAccountAvailabilitySchema enum.
@@ -1231,6 +1286,8 @@ func (e InstantAccountAvailabilitySchema) Valid() bool {
 	case CAPTCHAOFF:
 		return true
 	case DISABLED:
+		return true
+	case EMAILDOMAINSRESTRICTED:
 		return true
 	case REGISTRATIONCLOSED:
 		return true
@@ -1398,6 +1455,51 @@ func (e VerificationBasisSchema) Valid() bool {
 	}
 }
 
+// Defines values for VoiceJoinTokenStatus.
+const (
+	Expired VoiceJoinTokenStatus = "expired"
+	Pending VoiceJoinTokenStatus = "pending"
+	Revoked VoiceJoinTokenStatus = "revoked"
+	Used    VoiceJoinTokenStatus = "used"
+)
+
+// Valid indicates whether the value is a known member of the VoiceJoinTokenStatus enum.
+func (e VoiceJoinTokenStatus) Valid() bool {
+	switch e {
+	case Expired:
+		return true
+	case Pending:
+		return true
+	case Revoked:
+		return true
+	case Used:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VoiceServerHealthResponseStatus.
+const (
+	Down    VoiceServerHealthResponseStatus = "down"
+	Unknown VoiceServerHealthResponseStatus = "unknown"
+	Up      VoiceServerHealthResponseStatus = "up"
+)
+
+// Valid indicates whether the value is a known member of the VoiceServerHealthResponseStatus enum.
+func (e VoiceServerHealthResponseStatus) Valid() bool {
+	switch e {
+	case Down:
+		return true
+	case Unknown:
+		return true
+	case Up:
+		return true
+	default:
+		return false
+	}
+}
+
 // AccountIdentityLockReasonSchema Why the sign-in method can no longer change
 type AccountIdentityLockReasonSchema string
 
@@ -1501,8 +1603,11 @@ type AdminProfileBadgeResponse struct {
 	// AspectRatio Image width divided by its height. Render the image at the badge height and this many times as wide. Null for square badges
 	AspectRatio *float32 `json:"aspect_ratio"`
 
-	// Asset Badge image hash. The image is served at {static_cdn}/badges/{asset}.webp. Null for text badges
+	// Asset Badge image hash. The image is served at {static_cdn}/badges/{asset}.webp. Null for text badges and for badges with asset_url
 	Asset *HexString16Type `json:"asset"`
+
+	// AssetUrl Absolute image URL for a badge whose image is not a static badge hash, such as a custom badge. Null otherwise
+	AssetUrl *string `json:"asset_url"`
 
 	// Caption Short text for the badge, such as #42. A badge with an image uses it as alt text, and a badge without one shows it as text. Null when the label covers it
 	Caption *string `json:"caption"`
@@ -1522,11 +1627,17 @@ type AdminProfileBadgeResponse struct {
 	// Href Absolute URL to open when the badge is clicked, or null
 	Href *string `json:"href"`
 
-	// Kind Stable badge key. Known values: staff, partner, bug_hunter, operator_pass, visionary, visionary_number, plutonium, and premium on self-hosted instances. Clients must render unknown values from the other fields.
+	// Key Stable identity of the badge. It equals kind for built-in badges and is custom:{id} for custom badges, so use it as the list key
+	Key string `json:"key"`
+
+	// Kind Badge type. Known values: staff, partner, bug_hunter, operator_pass, visionary, visionary_number, plutonium, custom, and premium on self-hosted instances. Clients must render unknown values from the other fields.
 	Kind string `json:"kind"`
 
 	// Label Full badge description, localized for the viewer. Use it as the tooltip, and as alt text when there is no caption
 	Label string `json:"label"`
+
+	// Quote The quote from the holder's Operators' wall listing, plain text to show in straight double quotes after the other tooltip lines and never parse as markup. Absent while the wall does not show it
+	Quote *string `json:"quote,omitempty"`
 
 	// SmallAsset Image hash drawn for 20 pixels and smaller, served like asset. Use it instead of asset at those sizes. Absent when asset reads well small
 	SmallAsset *HexString16Type `json:"small_asset,omitempty"`
@@ -1558,7 +1669,7 @@ type AdminUserBanRequest struct {
 	// DurationHours Duration of the suspension in hours. Use 0 for a permanent suspension
 	DurationHours int `json:"duration_hours"`
 
-	// RemoveEvidence Remove the evidence messages after they are snapshotted into the decision
+	// RemoveEvidence Remove the reported messages and the evidence you listed after they are snapshotted into the decision. Other messages from the reports are kept
 	RemoveEvidence *bool `json:"remove_evidence,omitempty"`
 }
 
@@ -1592,7 +1703,7 @@ type AdminUserDeletionScheduleRequest struct {
 	// Immediate Self-hosted instances only. Delete the account now instead of after days_until_deletion, with no notice email. This cannot be undone
 	Immediate *bool `json:"immediate,omitempty"`
 
-	// RemoveEvidence Remove the evidence messages after they are snapshotted into the decision. Enforcement basis only
+	// RemoveEvidence Remove the reported messages and the evidence you listed after they are snapshotted into the decision. Other messages from the reports are kept. Enforcement basis only
 	RemoveEvidence *bool `json:"remove_evidence,omitempty"`
 
 	// ReplacePendingDeletionAt pending_deletion_at of the deletion this request replaces. Required when a deletion is already scheduled for the account
@@ -1721,6 +1832,164 @@ type CreateRegistrationUrlResponse struct {
 	Url string `json:"url"`
 }
 
+// CreateVoiceJoinTokenRequest defines model for CreateVoiceJoinTokenRequest.
+type CreateVoiceJoinTokenRequest struct {
+	AllowedGuildIds *[]SnowflakeType `json:"allowed_guild_ids,omitempty"`
+	AllowedUserIds  *[]SnowflakeType `json:"allowed_user_ids,omitempty"`
+
+	// ExpiresInSeconds Seconds until the token stops working, from 60 to 86400
+	ExpiresInSeconds *int `json:"expires_in_seconds,omitempty"`
+
+	// Hostname Hostname the server must use for its endpoint
+	Hostname         *string                    `json:"hostname,omitempty"`
+	InternalEndpoint *VoiceInternalEndpointType `json:"internal_endpoint,omitempty"`
+	Notes            *string                    `json:"notes,omitempty"`
+
+	// RegionEmoji Emoji for the new region in region_name
+	RegionEmoji *string `json:"region_emoji,omitempty"`
+
+	// RegionId Region for the new server, or null to let the API pick the nearest existing region
+	RegionId *string `json:"region_id,omitempty"`
+
+	// RegionLatitude Latitude of the new region in region_name. Placement sends people to the nearest region
+	RegionLatitude *float32 `json:"region_latitude,omitempty"`
+
+	// RegionLongitude Longitude of the new region in region_name
+	RegionLongitude *float32 `json:"region_longitude,omitempty"`
+
+	// RegionName Name for a new region with the id in region_id, created when the server joins
+	RegionName            *string   `json:"region_name,omitempty"`
+	RequiredGuildFeatures *[]string `json:"required_guild_features,omitempty"`
+
+	// ServerId Id for the new server
+	ServerId            *string `json:"server_id,omitempty"`
+	SoftConnectionLimit *int    `json:"soft_connection_limit,omitempty"`
+	VipOnly             *bool   `json:"vip_only,omitempty"`
+}
+
+// CreateVoiceJoinTokenResponse defines model for CreateVoiceJoinTokenResponse.
+type CreateVoiceJoinTokenResponse struct {
+	// Command Command to run on the voice machine
+	Command string `json:"command"`
+
+	// ExpiresAt ISO 8601 timestamp when the token stops working
+	ExpiresAt string `json:"expires_at"`
+
+	// Token The token. It appears in this response only
+	Token string `json:"token"`
+
+	// TokenId ID of the token
+	TokenId SnowflakeStringType `json:"token_id"`
+}
+
+// CreateVoiceRegionRequest defines model for CreateVoiceRegionRequest.
+type CreateVoiceRegionRequest struct {
+	// AllowedGuildIds Guild IDs explicitly allowed to use this region
+	AllowedGuildIds *[]SnowflakeType `json:"allowed_guild_ids,omitempty"`
+
+	// AllowedUserIds User IDs explicitly allowed to use this region
+	AllowedUserIds *[]SnowflakeType `json:"allowed_user_ids,omitempty"`
+
+	// Emoji Emoji representing the region
+	Emoji string `json:"emoji"`
+
+	// Id Unique identifier for the voice region
+	Id string `json:"id"`
+
+	// IsDefault Whether this is the default region
+	IsDefault *bool `json:"is_default,omitempty"`
+
+	// Latitude Geographic latitude coordinate
+	Latitude float32 `json:"latitude"`
+
+	// Longitude Geographic longitude coordinate
+	Longitude float32 `json:"longitude"`
+
+	// Name Display name of the voice region
+	Name string `json:"name"`
+
+	// RequiredGuildFeatures Guild features required to use this region
+	RequiredGuildFeatures *[]string `json:"required_guild_features,omitempty"`
+
+	// VipOnly Whether this region is restricted to VIP users
+	VipOnly *bool `json:"vip_only,omitempty"`
+}
+
+// CreateVoiceRegionResponse defines model for CreateVoiceRegionResponse.
+type CreateVoiceRegionResponse struct {
+	// Region Created voice region
+	Region VoiceRegionAdminResponse `json:"region"`
+}
+
+// CreateVoiceServerRequestBody defines model for CreateVoiceServerRequestBody.
+type CreateVoiceServerRequestBody struct {
+	// AllowedGuildIds Guild IDs explicitly allowed to use this server
+	AllowedGuildIds *[]SnowflakeType `json:"allowed_guild_ids,omitempty"`
+
+	// AllowedUserIds User IDs explicitly allowed to use this server
+	AllowedUserIds *[]SnowflakeType `json:"allowed_user_ids,omitempty"`
+
+	// ApiKey API key for authenticating with the voice server
+	ApiKey string `json:"api_key"`
+
+	// ApiSecret API secret for authenticating with the voice server
+	ApiSecret string `json:"api_secret"`
+
+	// Draining Whether placement sends new calls elsewhere while calls on this server finish
+	Draining *bool `json:"draining,omitempty"`
+
+	// Endpoint Client signal WebSocket endpoint URL for the voice server
+	Endpoint         string                     `json:"endpoint"`
+	InternalEndpoint *VoiceInternalEndpointType `json:"internal_endpoint,omitempty"`
+
+	// IsActive Whether the server is currently active
+	IsActive *bool `json:"is_active,omitempty"`
+
+	// Latitude Optional geographic latitude override for this server
+	Latitude *float32 `json:"latitude,omitempty"`
+
+	// Longitude Optional geographic longitude override for this server
+	Longitude *float32 `json:"longitude,omitempty"`
+
+	// Notes Free-form admin notes about this server
+	Notes      *string              `json:"notes,omitempty"`
+	PublicIpv4 *VoicePublicIpv4Type `json:"public_ipv4,omitempty"`
+	PublicIpv6 *VoicePublicIpv6Type `json:"public_ipv6,omitempty"`
+
+	// RequiredGuildFeatures Guild features required to use this server
+	RequiredGuildFeatures *[]string `json:"required_guild_features,omitempty"`
+
+	// ServerId Unique identifier for the voice server
+	ServerId string `json:"server_id"`
+
+	// SoftConnectionLimit Connection count above which placement prefers another server, or null for no limit
+	SoftConnectionLimit *int `json:"soft_connection_limit,omitempty"`
+
+	// VipOnly Whether this server is restricted to VIP users
+	VipOnly *bool `json:"vip_only,omitempty"`
+}
+
+// CreateVoiceServerResponse defines model for CreateVoiceServerResponse.
+type CreateVoiceServerResponse struct {
+	// Server Created voice server
+	Server VoiceServerAdminResponse `json:"server"`
+}
+
+// CreateVoiceServerTestTokenResponse defines model for CreateVoiceServerTestTokenResponse.
+type CreateVoiceServerTestTokenResponse struct {
+	// Endpoint Endpoint of the server
+	Endpoint string `json:"endpoint"`
+
+	// Room Name of the throwaway test room
+	Room string `json:"room"`
+
+	// Token LiveKit token for a hidden audio only participant, valid for 60 seconds
+	Token string `json:"token"`
+}
+
+// CustomBadgeIdListResponse IDs of the custom badges assigned to it
+type CustomBadgeIdListResponse = []SnowflakeStringType
+
 // DateOfBirthPolicySchema Whether the instance asks for a date of birth, and who must enter one
 type DateOfBirthPolicySchema string
 
@@ -1739,8 +2008,76 @@ type DeleteAllUserMessagesResponse struct {
 // DeleteAllUserMessagesResponseSuccess defines model for DeleteAllUserMessagesResponse.Success.
 type DeleteAllUserMessagesResponseSuccess bool
 
+// DeleteVoiceResponse defines model for DeleteVoiceResponse.
+type DeleteVoiceResponse struct {
+	// Success Whether the deletion was successful
+	Success bool `json:"success"`
+}
+
 // DeletionReasonCode Reason the account was scheduled for deletion
 type DeletionReasonCode int32
+
+// DistributionChannelPriceSchema defines model for DistributionChannelPriceSchema.
+type DistributionChannelPriceSchema struct {
+	// BaseUnitAmount Unit amount of the base price, in minor units
+	BaseUnitAmount int `json:"base_unit_amount"`
+
+	// PriceId Stripe price ID charged through the distribution
+	PriceId string `json:"price_id"`
+
+	// RateBps Share of the channel price that goes to the distribution, in basis points. 500 means 5%
+	RateBps int `json:"rate_bps"`
+
+	// UnitAmount Unit amount of the channel price, in minor units
+	UnitAmount int `json:"unit_amount"`
+}
+
+// DistributionPricingConfigResponse defines model for DistributionPricingConfigResponse.
+type DistributionPricingConfigResponse struct {
+	Rules []DistributionRuleSchema `json:"rules"`
+}
+
+// DistributionPricingUpdateRequest defines model for DistributionPricingUpdateRequest.
+type DistributionPricingUpdateRequest struct {
+	// Rules Full list of distribution rules. A left-out rule that already has channel prices stays stored as inactive so its subscriptions keep renewing
+	Rules []struct {
+		// Active Whether checkouts and quotes for this distribution use the channel price
+		Active bool `json:"active"`
+
+		// Id Distribution id sent by clients built for that distribution, for example ios_marketplace
+		Id string `json:"id"`
+
+		// Products Products that get the channel price
+		Products []DistributionProductSchema `json:"products"`
+
+		// RateBps Share of the channel price that goes to the distribution, in basis points. 500 means 5%
+		RateBps int `json:"rate_bps"`
+	} `json:"rules"`
+}
+
+// DistributionProductSchema defines model for DistributionProductSchema.
+type DistributionProductSchema string
+
+// DistributionRuleSchema defines model for DistributionRuleSchema.
+type DistributionRuleSchema struct {
+	// Active Whether checkouts and quotes for this distribution use the channel price
+	Active bool `json:"active"`
+
+	// Id Distribution id sent by clients built for that distribution, for example ios_marketplace
+	Id string `json:"id"`
+
+	// Prices Channel Stripe prices keyed by "<rule_version>:<base price ID>". Managed by the server and never removed
+	Prices map[string]DistributionChannelPriceSchema `json:"prices"`
+
+	// Products Products that get the channel price
+	Products []DistributionProductSchema `json:"products"`
+
+	// RateBps Share of the channel price that goes to the distribution, in basis points. 500 means 5%
+	RateBps int `json:"rate_bps"`
+
+	// RuleVersion Bumped by the server whenever rate_bps changes. Prices made under a version keep it
+	RuleVersion int `json:"rule_version"`
+}
 
 // DomainMigrationConfigResponse defines model for DomainMigrationConfigResponse.
 type DomainMigrationConfigResponse struct {
@@ -1944,10 +2281,12 @@ type IdentifierFirstModeSchema string
 type InstanceBillingResponse struct {
 	AutomaticTax                  *bool                               `json:"automatic_tax"`
 	BillingActive                 bool                                `json:"billing_active"`
+	BillingEmails                 *bool                               `json:"billing_emails"`
 	CatalogMode                   BillingCatalogModeSchema            `json:"catalog_mode"`
 	CountryCurrencies             *map[string]string                  `json:"country_currencies"`
 	DefaultCurrency               *PremiumCurrency                    `json:"default_currency"`
 	EffectiveAutomaticTax         bool                                `json:"effective_automatic_tax"`
+	EffectiveBillingEmails        bool                                `json:"effective_billing_emails"`
 	EffectiveEnabled              bool                                `json:"effective_enabled"`
 	EffectiveTaxIdCollection      bool                                `json:"effective_tax_id_collection"`
 	EffectiveTermsConsentRequired bool                                `json:"effective_terms_consent_required"`
@@ -1967,6 +2306,7 @@ type InstanceBillingResponse struct {
 // InstanceBillingUpdateRequest defines model for InstanceBillingUpdateRequest.
 type InstanceBillingUpdateRequest struct {
 	AutomaticTax         *bool                                    `json:"automatic_tax,omitempty"`
+	BillingEmails        *bool                                    `json:"billing_emails,omitempty"`
 	CountryCurrencies    *BillingCountryCurrenciesSchema          `json:"country_currencies,omitempty"`
 	DefaultCurrency      *PremiumCurrency                         `json:"default_currency,omitempty"`
 	Enabled              *bool                                    `json:"enabled,omitempty"`
@@ -1994,21 +2334,27 @@ type InstanceConfigResponse struct {
 	Accounts  AccountsConfigSchema `json:"accounts"`
 	AppPublic struct {
 		Branding struct {
-			CustomCss                    *string `json:"custom_css"`
-			FaviconDarkUrl               *string `json:"favicon_dark_url"`
-			FaviconUrl                   *string `json:"favicon_url"`
-			IconUrl                      *string `json:"icon_url"`
-			LogoUrl                      *string `json:"logo_url"`
-			PremiumInfoUrl               *string `json:"premium_info_url"`
-			PremiumProductName           string  `json:"premium_product_name"`
-			ProductName                  string  `json:"product_name"`
-			SignInBackdropUrl            *string `json:"sign_in_backdrop_url"`
-			StatusPageIncidentHistoryUrl *string `json:"status_page_incident_history_url"`
-			StatusPageUrl                *string `json:"status_page_url"`
-			SymbolUrl                    *string `json:"symbol_url"`
-			ThemeColor                   *string `json:"theme_color"`
-			UploadLimitMessage           *string `json:"upload_limit_message"`
-			WordmarkUrl                  *string `json:"wordmark_url"`
+			CustomCss                     *string  `json:"custom_css"`
+			FaviconDarkUrl                *string  `json:"favicon_dark_url"`
+			FaviconUrl                    *string  `json:"favicon_url"`
+			IconUrl                       *string  `json:"icon_url"`
+			LogoUrl                       *string  `json:"logo_url"`
+			PremiumInfoUrl                *string  `json:"premium_info_url"`
+			PremiumPageColor              *string  `json:"premium_page_color"`
+			PremiumProductName            string   `json:"premium_product_name"`
+			PremiumShowcaseExpressionsUrl *string  `json:"premium_showcase_expressions_url"`
+			PremiumShowcaseProfileUrl     *string  `json:"premium_showcase_profile_url"`
+			PremiumShowcaseStreamUrl      *string  `json:"premium_showcase_stream_url"`
+			PremiumShowcaseUploadUrl      *string  `json:"premium_showcase_upload_url"`
+			ProductName                   string   `json:"product_name"`
+			SignInBackdropUrl             *string  `json:"sign_in_backdrop_url"`
+			StatusPageIncidentHistoryUrl  *string  `json:"status_page_incident_history_url"`
+			StatusPageUrl                 *string  `json:"status_page_url"`
+			SymbolUrl                     *string  `json:"symbol_url"`
+			ThemeColor                    *string  `json:"theme_color"`
+			TrustedDomains                []string `json:"trusted_domains"`
+			UploadLimitMessage            *string  `json:"upload_limit_message"`
+			WordmarkUrl                   *string  `json:"wordmark_url"`
 		} `json:"branding"`
 		Legal struct {
 			GuidelinesUrl *string `json:"guidelines_url"`
@@ -2036,13 +2382,14 @@ type InstanceConfigResponse struct {
 			PowEscalationPerHour int `json:"pow_escalation_per_hour"`
 		} `json:"instant_accounts"`
 	} `json:"auth"`
-	Billing            InstanceBillingResponse          `json:"billing"`
-	Captcha            CaptchaConfigResponse            `json:"captcha"`
-	DomainMigration    DomainMigrationConfigResponse    `json:"domain_migration"`
-	ExperimentDelivery ExperimentDeliveryConfigResponse `json:"experiment_delivery"`
-	GatewayRollout     GatewayRolloutConfigResponse     `json:"gateway_rollout"`
-	GuildVisits        GuildVisitsConfigResponse        `json:"guild_visits"`
-	Integrations       struct {
+	Billing             InstanceBillingResponse           `json:"billing"`
+	Captcha             CaptchaConfigResponse             `json:"captcha"`
+	DistributionPricing DistributionPricingConfigResponse `json:"distribution_pricing"`
+	DomainMigration     DomainMigrationConfigResponse     `json:"domain_migration"`
+	ExperimentDelivery  ExperimentDeliveryConfigResponse  `json:"experiment_delivery"`
+	GatewayRollout      GatewayRolloutConfigResponse      `json:"gateway_rollout"`
+	GuildVisits         GuildVisitsConfigResponse         `json:"guild_visits"`
+	Integrations        struct {
 		Bluesky struct {
 			ClientName       *string `json:"client_name"`
 			ClientUri        *string `json:"client_uri"`
@@ -2127,10 +2474,13 @@ type InstanceConfigResponse struct {
 		DirectMessagesLocked   bool `json:"direct_messages_locked"`
 
 		// FriendsDisabled Whether friend requests are disabled instance-wide
-		FriendsDisabled   bool                                    `json:"friends_disabled"`
-		GuildCreateAccess bool                                    `json:"guild_create_access"`
-		PremiumMode       InstanceConfigResponsePolicyPremiumMode `json:"premium_mode"`
-		Services          struct {
+		FriendsDisabled   bool `json:"friends_disabled"`
+		GuildCreateAccess bool `json:"guild_create_access"`
+
+		// PersonalNotesEnabled Whether people can use personal notes
+		PersonalNotesEnabled bool                                    `json:"personal_notes_enabled"`
+		PremiumMode          InstanceConfigResponsePolicyPremiumMode `json:"premium_mode"`
+		Services             struct {
 			BlueskyEnabled *bool `json:"bluesky_enabled"`
 			GifEnabled     *bool `json:"gif_enabled"`
 			YoutubeEnabled *bool `json:"youtube_enabled"`
@@ -2201,8 +2551,14 @@ type InstanceConfigResponse struct {
 		Scope       *string `json:"scope"`
 		TokenUrl    *string `json:"token_url"`
 		UserinfoUrl *string `json:"userinfo_url"`
+
+		// UsernameFromProvider Each SSO sign-in sets the username from the provider, and people can't change it in Fluxer. Only on username instances
+		UsernameFromProvider bool `json:"username_from_provider"`
 	} `json:"sso"`
 	VoiceP2p VoiceP2pConfigResponse `json:"voice_p2p"`
+
+	// Warnings Problems the save found that did not stop it. Always empty outside a save response
+	Warnings []string `json:"warnings"`
 }
 
 // InstanceConfigResponseIntegrationsEmailEffectiveProvider Deprecated, use delivery
@@ -2225,21 +2581,23 @@ type InstanceConfigUpdateRequest struct {
 	Accounts  *AccountsConfigUpdateRequest `json:"accounts,omitempty"`
 	AppPublic *struct {
 		Branding *struct {
-			CustomCss                    *string `json:"custom_css,omitempty"`
-			FaviconDarkUrl               *string `json:"favicon_dark_url,omitempty"`
-			FaviconUrl                   *string `json:"favicon_url,omitempty"`
-			IconUrl                      *string `json:"icon_url,omitempty"`
-			LogoUrl                      *string `json:"logo_url,omitempty"`
-			PremiumInfoUrl               *string `json:"premium_info_url,omitempty"`
-			PremiumProductName           *string `json:"premium_product_name,omitempty"`
-			ProductName                  *string `json:"product_name,omitempty"`
-			SignInBackdropUrl            *string `json:"sign_in_backdrop_url,omitempty"`
-			StatusPageIncidentHistoryUrl *string `json:"status_page_incident_history_url,omitempty"`
-			StatusPageUrl                *string `json:"status_page_url,omitempty"`
-			SymbolUrl                    *string `json:"symbol_url,omitempty"`
-			ThemeColor                   *string `json:"theme_color,omitempty"`
-			UploadLimitMessage           *string `json:"upload_limit_message,omitempty"`
-			WordmarkUrl                  *string `json:"wordmark_url,omitempty"`
+			CustomCss                    *string   `json:"custom_css,omitempty"`
+			FaviconDarkUrl               *string   `json:"favicon_dark_url,omitempty"`
+			FaviconUrl                   *string   `json:"favicon_url,omitempty"`
+			IconUrl                      *string   `json:"icon_url,omitempty"`
+			LogoUrl                      *string   `json:"logo_url,omitempty"`
+			PremiumInfoUrl               *string   `json:"premium_info_url,omitempty"`
+			PremiumPageColor             *string   `json:"premium_page_color,omitempty"`
+			PremiumProductName           *string   `json:"premium_product_name,omitempty"`
+			ProductName                  *string   `json:"product_name,omitempty"`
+			SignInBackdropUrl            *string   `json:"sign_in_backdrop_url,omitempty"`
+			StatusPageIncidentHistoryUrl *string   `json:"status_page_incident_history_url,omitempty"`
+			StatusPageUrl                *string   `json:"status_page_url,omitempty"`
+			SymbolUrl                    *string   `json:"symbol_url,omitempty"`
+			ThemeColor                   *string   `json:"theme_color,omitempty"`
+			TrustedDomains               *[]string `json:"trusted_domains,omitempty"`
+			UploadLimitMessage           *string   `json:"upload_limit_message,omitempty"`
+			WordmarkUrl                  *string   `json:"wordmark_url,omitempty"`
 		} `json:"branding,omitempty"`
 		Legal *struct {
 			GuidelinesUrl *string `json:"guidelines_url,omitempty"`
@@ -2254,14 +2612,15 @@ type InstanceConfigUpdateRequest struct {
 			Configured *bool `json:"configured,omitempty"`
 		} `json:"setup,omitempty"`
 	} `json:"app_public,omitempty"`
-	Auth               *AuthConfigUpdateRequest               `json:"auth,omitempty"`
-	Billing            *InstanceBillingUpdateRequest          `json:"billing,omitempty"`
-	Captcha            *CaptchaConfigUpdateRequest            `json:"captcha,omitempty"`
-	DomainMigration    *DomainMigrationConfigUpdateRequest    `json:"domain_migration,omitempty"`
-	ExperimentDelivery *ExperimentDeliveryConfigUpdateRequest `json:"experiment_delivery,omitempty"`
-	GatewayRollout     *GatewayRolloutConfigUpdateRequest     `json:"gateway_rollout,omitempty"`
-	GuildVisits        *GuildVisitsConfigUpdateRequest        `json:"guild_visits,omitempty"`
-	Integrations       *struct {
+	Auth                *AuthConfigUpdateRequest               `json:"auth,omitempty"`
+	Billing             *InstanceBillingUpdateRequest          `json:"billing,omitempty"`
+	Captcha             *CaptchaConfigUpdateRequest            `json:"captcha,omitempty"`
+	DistributionPricing *DistributionPricingUpdateRequest      `json:"distribution_pricing,omitempty"`
+	DomainMigration     *DomainMigrationConfigUpdateRequest    `json:"domain_migration,omitempty"`
+	ExperimentDelivery  *ExperimentDeliveryConfigUpdateRequest `json:"experiment_delivery,omitempty"`
+	GatewayRollout      *GatewayRolloutConfigUpdateRequest     `json:"gateway_rollout,omitempty"`
+	GuildVisits         *GuildVisitsConfigUpdateRequest        `json:"guild_visits,omitempty"`
+	Integrations        *struct {
 		Bluesky *struct {
 			ClientName *string `json:"client_name,omitempty"`
 			ClientUri  *string `json:"client_uri,omitempty"`
@@ -2339,10 +2698,13 @@ type InstanceConfigUpdateRequest struct {
 		DirectMessagesLocked   *InstanceConfigUpdateRequestPolicyDirectMessagesLocked `json:"direct_messages_locked,omitempty"`
 
 		// FriendsDisabled Whether friend requests are disabled instance-wide. Left out while direct_messages_disabled changes, it takes the same value
-		FriendsDisabled   *bool                                         `json:"friends_disabled,omitempty"`
-		GuildCreateAccess *bool                                         `json:"guild_create_access,omitempty"`
-		PremiumMode       *InstanceConfigUpdateRequestPolicyPremiumMode `json:"premium_mode,omitempty"`
-		Services          *struct {
+		FriendsDisabled   *bool `json:"friends_disabled,omitempty"`
+		GuildCreateAccess *bool `json:"guild_create_access,omitempty"`
+
+		// PersonalNotesEnabled Whether people can use personal notes. Off by default on self-hosted instances
+		PersonalNotesEnabled *bool                                         `json:"personal_notes_enabled,omitempty"`
+		PremiumMode          *InstanceConfigUpdateRequestPolicyPremiumMode `json:"premium_mode,omitempty"`
+		Services             *struct {
 			BlueskyEnabled *bool `json:"bluesky_enabled,omitempty"`
 			GifEnabled     *bool `json:"gif_enabled,omitempty"`
 			YoutubeEnabled *bool `json:"youtube_enabled,omitempty"`
@@ -2388,9 +2750,15 @@ type InstanceConfigUpdateRequest struct {
 		GroupsClaim *string `json:"groups_claim,omitempty"`
 		Issuer      *string `json:"issuer,omitempty"`
 		JwksUrl     *string `json:"jwks_url,omitempty"`
-		Scope       *string `json:"scope,omitempty"`
-		TokenUrl    *string `json:"token_url,omitempty"`
-		UserinfoUrl *string `json:"userinfo_url,omitempty"`
+
+		// MigrateIdentities Only for a save that changes the issuer while accounts are linked to the old one. True moves those links to the new issuer, false leaves them on the old one. Applies to this save only and is never stored
+		MigrateIdentities *bool   `json:"migrate_identities,omitempty"`
+		Scope             *string `json:"scope,omitempty"`
+		TokenUrl          *string `json:"token_url,omitempty"`
+		UserinfoUrl       *string `json:"userinfo_url,omitempty"`
+
+		// UsernameFromProvider Each SSO sign-in sets the username from the provider, and people can't change it in Fluxer. Only on username instances
+		UsernameFromProvider *bool `json:"username_from_provider,omitempty"`
 	} `json:"sso,omitempty"`
 	VoiceP2p *VoiceP2pConfigUpdateRequest `json:"voice_p2p,omitempty"`
 }
@@ -2474,6 +2842,21 @@ type LastSessionCleanupModeSchema string
 // ListUserSessionsResponse defines model for ListUserSessionsResponse.
 type ListUserSessionsResponse struct {
 	Sessions []struct {
+		// AppBetaNumber Beta number the native app last reported, for beta builds only
+		AppBetaNumber *Int32Type `json:"app_beta_number"`
+
+		// AppBuildNumber Platform build number the native app last reported for this session
+		AppBuildNumber *Int32Type `json:"app_build_number"`
+
+		// AppPlatform Platform the native app last reported for this session
+		AppPlatform *string `json:"app_platform"`
+
+		// AppReleaseChannel Release channel the native app last reported for this session
+		AppReleaseChannel *string `json:"app_release_channel"`
+
+		// AppVersion App version the native app last reported for this session
+		AppVersion *string `json:"app_version"`
+
 		// ApproxLastUsedAt ISO timestamp of the session last usage (approximate)
 		ApproxLastUsedAt string `json:"approx_last_used_at"`
 
@@ -2501,6 +2884,57 @@ type ListUserSessionsResponse struct {
 		// SessionIdHash Hashed session identifier (base64url)
 		SessionIdHash string `json:"session_id_hash"`
 	} `json:"sessions"`
+}
+
+// ListVoiceJoinTokensResponse defines model for ListVoiceJoinTokensResponse.
+type ListVoiceJoinTokensResponse struct {
+	// Tokens Join tokens, newest first
+	Tokens []VoiceJoinTokenAdminResponse `json:"tokens"`
+}
+
+// ListVoiceRegionsResponse defines model for ListVoiceRegionsResponse.
+type ListVoiceRegionsResponse struct {
+	// Regions List of voice regions
+	Regions []struct {
+		// AllowedGuildIds Guild IDs explicitly allowed to use this region
+		AllowedGuildIds []SnowflakeStringType `json:"allowed_guild_ids"`
+
+		// AllowedUserIds User IDs explicitly allowed to use this region
+		AllowedUserIds []SnowflakeStringType `json:"allowed_user_ids"`
+
+		// CreatedAt ISO 8601 timestamp when the region was created
+		CreatedAt *string `json:"created_at"`
+
+		// Emoji Emoji representing the region
+		Emoji string `json:"emoji"`
+
+		// Id Unique identifier for the voice region
+		Id string `json:"id"`
+
+		// IsDefault Whether this is the default region
+		IsDefault bool `json:"is_default"`
+
+		// Latitude Geographic latitude coordinate
+		Latitude float32 `json:"latitude"`
+
+		// Longitude Geographic longitude coordinate
+		Longitude float32 `json:"longitude"`
+
+		// Name Display name of the voice region
+		Name string `json:"name"`
+
+		// RequiredGuildFeatures Guild features required to use this region
+		RequiredGuildFeatures []string `json:"required_guild_features"`
+
+		// Servers Voice servers in this region
+		Servers *[]VoiceServerAdminResponse `json:"servers,omitempty"`
+
+		// UpdatedAt ISO 8601 timestamp when the region was last updated
+		UpdatedAt *string `json:"updated_at"`
+
+		// VipOnly Whether this region is restricted to VIP users
+		VipOnly bool `json:"vip_only"`
+	} `json:"regions"`
 }
 
 // LookupUserResponse defines model for LookupUserResponse.
@@ -2662,16 +3096,68 @@ type ThrottledError struct {
 	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
+// UpdateVoiceServerRequestBody defines model for UpdateVoiceServerRequestBody.
+type UpdateVoiceServerRequestBody struct {
+	// AllowedGuildIds Guild IDs explicitly allowed to use this server
+	AllowedGuildIds *[]SnowflakeType `json:"allowed_guild_ids,omitempty"`
+
+	// AllowedUserIds User IDs explicitly allowed to use this server
+	AllowedUserIds *[]SnowflakeType `json:"allowed_user_ids,omitempty"`
+
+	// ApiKey API key for authenticating with the voice server
+	ApiKey *string `json:"api_key,omitempty"`
+
+	// ApiSecret API secret for authenticating with the voice server
+	ApiSecret *string `json:"api_secret,omitempty"`
+
+	// Draining Whether placement sends new calls elsewhere while calls on this server finish
+	Draining *bool `json:"draining,omitempty"`
+
+	// Endpoint Client signal WebSocket endpoint URL for the voice server
+	Endpoint         *string                    `json:"endpoint,omitempty"`
+	InternalEndpoint *VoiceInternalEndpointType `json:"internal_endpoint,omitempty"`
+
+	// IsActive Whether the server is currently active
+	IsActive *bool `json:"is_active,omitempty"`
+
+	// Latitude Optional geographic latitude override for this server
+	Latitude *float32 `json:"latitude,omitempty"`
+
+	// Longitude Optional geographic longitude override for this server
+	Longitude *float32 `json:"longitude,omitempty"`
+
+	// Notes Free-form admin notes about this server, or null to clear them
+	Notes      *string              `json:"notes,omitempty"`
+	PublicIpv4 *VoicePublicIpv4Type `json:"public_ipv4,omitempty"`
+	PublicIpv6 *VoicePublicIpv6Type `json:"public_ipv6,omitempty"`
+
+	// RequiredGuildFeatures Guild features required to use this server
+	RequiredGuildFeatures *[]string `json:"required_guild_features,omitempty"`
+
+	// SoftConnectionLimit Connection count above which placement prefers another server, or null for no limit
+	SoftConnectionLimit *int `json:"soft_connection_limit,omitempty"`
+
+	// VipOnly Whether this server is restricted to VIP users
+	VipOnly *bool `json:"vip_only,omitempty"`
+}
+
+// UpdateVoiceServerResponse defines model for UpdateVoiceServerResponse.
+type UpdateVoiceServerResponse struct {
+	// Server Updated voice server
+	Server VoiceServerAdminResponse `json:"server"`
+}
+
 // UserAdminResponseSchema defines model for UserAdminResponseSchema.
 type UserAdminResponseSchema struct {
-	AccentColor        *Int32Type        `json:"accent_color"`
-	AccountTier        AccountTierSchema `json:"account_tier"`
-	Acls               []string          `json:"acls"`
-	AuthenticatorTypes []Int32Type       `json:"authenticator_types"`
-	Avatar             *string           `json:"avatar"`
-	Banner             *string           `json:"banner"`
-	Bio                *string           `json:"bio"`
-	Bot                bool              `json:"bot"`
+	AccentColor        *Int32Type                `json:"accent_color"`
+	AccountTier        AccountTierSchema         `json:"account_tier"`
+	Acls               []string                  `json:"acls"`
+	AuthenticatorTypes []Int32Type               `json:"authenticator_types"`
+	Avatar             *string                   `json:"avatar"`
+	BadgeIds           CustomBadgeIdListResponse `json:"badge_ids"`
+	Banner             *string                   `json:"banner"`
+	Bio                *string                   `json:"bio"`
+	Bot                bool                      `json:"bot"`
 
 	// Claimed Whether the account can be signed in to from another device
 	Claimed     bool    `json:"claimed"`
@@ -2750,6 +3236,51 @@ type UsernameType = string
 // VerificationBasisSchema What an account needs to finish setting up
 type VerificationBasisSchema string
 
+// VoiceInternalEndpointType URL the API uses for the control API and health checks of this server, such as http://voice-fra:7880
+type VoiceInternalEndpointType = string
+
+// VoiceJoinTokenAdminResponse defines model for VoiceJoinTokenAdminResponse.
+type VoiceJoinTokenAdminResponse struct {
+	// CreatedAt ISO 8601 timestamp when the token was created
+	CreatedAt string `json:"created_at"`
+
+	// ExpiresAt ISO 8601 timestamp when the token stops working
+	ExpiresAt string `json:"expires_at"`
+
+	// Hostname Hostname preset, or null
+	Hostname *string `json:"hostname"`
+
+	// Notes Notes for the new server, or null
+	Notes *string `json:"notes"`
+
+	// RegionId Region preset, or null
+	RegionId *string `json:"region_id"`
+
+	// RegionName Name of the new region it creates, or null
+	RegionName *string `json:"region_name"`
+
+	// RevokedAt ISO 8601 timestamp when it was revoked
+	RevokedAt *string `json:"revoked_at"`
+
+	// ServerId Server id preset, or null
+	ServerId *string `json:"server_id"`
+
+	// Status pending, used, expired or revoked
+	Status VoiceJoinTokenStatus `json:"status"`
+
+	// TokenId ID of the token
+	TokenId SnowflakeStringType `json:"token_id"`
+
+	// UsedAt ISO 8601 timestamp when a server joined with it
+	UsedAt *string `json:"used_at"`
+
+	// UsedServerId ID of the server that joined with it
+	UsedServerId *string `json:"used_server_id"`
+}
+
+// VoiceJoinTokenStatus defines model for VoiceJoinTokenStatus.
+type VoiceJoinTokenStatus string
+
 // VoiceP2pConfigResponse defines model for VoiceP2pConfigResponse.
 type VoiceP2pConfigResponse struct {
 	ConfigVersion       int                                 `json:"config_version"`
@@ -2776,6 +3307,129 @@ type VoiceP2pConfigUpdateRequest struct {
 	RolloutCountryCodes *ExperimentRolloutCountryCodesSchema `json:"rollout_country_codes,omitempty"`
 	RolloutSalt         *string                              `json:"rollout_salt,omitempty"`
 }
+
+// VoicePublicIpv4Type Public IPv4 address LiveKit gives to clients
+type VoicePublicIpv4Type = string
+
+// VoicePublicIpv6Type Public IPv6 address LiveKit gives to clients
+type VoicePublicIpv6Type = string
+
+// VoiceRegionAdminResponse defines model for VoiceRegionAdminResponse.
+type VoiceRegionAdminResponse struct {
+	// AllowedGuildIds Guild IDs explicitly allowed to use this region
+	AllowedGuildIds []SnowflakeStringType `json:"allowed_guild_ids"`
+
+	// AllowedUserIds User IDs explicitly allowed to use this region
+	AllowedUserIds []SnowflakeStringType `json:"allowed_user_ids"`
+
+	// CreatedAt ISO 8601 timestamp when the region was created
+	CreatedAt *string `json:"created_at"`
+
+	// Emoji Emoji representing the region
+	Emoji string `json:"emoji"`
+
+	// Id Unique identifier for the voice region
+	Id string `json:"id"`
+
+	// IsDefault Whether this is the default region
+	IsDefault bool `json:"is_default"`
+
+	// Latitude Geographic latitude coordinate
+	Latitude float32 `json:"latitude"`
+
+	// Longitude Geographic longitude coordinate
+	Longitude float32 `json:"longitude"`
+
+	// Name Display name of the voice region
+	Name string `json:"name"`
+
+	// RequiredGuildFeatures Guild features required to use this region
+	RequiredGuildFeatures []string `json:"required_guild_features"`
+
+	// UpdatedAt ISO 8601 timestamp when the region was last updated
+	UpdatedAt *string `json:"updated_at"`
+
+	// VipOnly Whether this region is restricted to VIP users
+	VipOnly bool `json:"vip_only"`
+}
+
+// VoiceServerAdminResponse defines model for VoiceServerAdminResponse.
+type VoiceServerAdminResponse struct {
+	// AllowedGuildIds Guild IDs explicitly allowed to use this server
+	AllowedGuildIds []SnowflakeStringType `json:"allowed_guild_ids"`
+
+	// AllowedUserIds User IDs explicitly allowed to use this server
+	AllowedUserIds []SnowflakeStringType `json:"allowed_user_ids"`
+
+	// CreatedAt ISO 8601 timestamp when the server was created
+	CreatedAt *string `json:"created_at"`
+
+	// Draining Whether placement sends new calls elsewhere while calls on this server finish
+	Draining bool `json:"draining"`
+
+	// DuplicateApiKey Whether another server uses the same API key
+	DuplicateApiKey bool `json:"duplicate_api_key"`
+
+	// Endpoint Client signal WebSocket endpoint URL for the voice server
+	Endpoint string `json:"endpoint"`
+
+	// Health Health of the server as this API node last saw it
+	Health VoiceServerHealthResponse `json:"health"`
+
+	// InternalEndpoint URL the API uses for the control API and health checks, or null to use the endpoint
+	InternalEndpoint *string `json:"internal_endpoint"`
+
+	// IsActive Whether the server is currently active
+	IsActive bool `json:"is_active"`
+
+	// Latitude Optional geographic latitude override for this server
+	Latitude *float32 `json:"latitude"`
+
+	// Longitude Optional geographic longitude override for this server
+	Longitude *float32 `json:"longitude"`
+
+	// Notes Free-form admin notes about this server, or null when there are none
+	Notes *string `json:"notes"`
+
+	// PublicIpv4 Public IPv4 address LiveKit gives to clients, or null when none is known
+	PublicIpv4 *string `json:"public_ipv4"`
+
+	// PublicIpv6 Public IPv6 address LiveKit gives to clients, or null when none is known
+	PublicIpv6 *string `json:"public_ipv6"`
+
+	// RegionId ID of the region this server belongs to
+	RegionId string `json:"region_id"`
+
+	// RequiredGuildFeatures Guild features required to use this server
+	RequiredGuildFeatures []string `json:"required_guild_features"`
+
+	// ServerId Unique identifier for the voice server
+	ServerId string `json:"server_id"`
+
+	// SoftConnectionLimit Connection count above which placement prefers another server, or null when the server has no limit
+	SoftConnectionLimit *int `json:"soft_connection_limit"`
+
+	// UpdatedAt ISO 8601 timestamp when the server was last updated
+	UpdatedAt *string `json:"updated_at"`
+
+	// VipOnly Whether this server is restricted to VIP users
+	VipOnly bool `json:"vip_only"`
+}
+
+// VoiceServerHealthResponse defines model for VoiceServerHealthResponse.
+type VoiceServerHealthResponse struct {
+	// CheckedAt ISO 8601 timestamp of the last check, or null before the first
+	CheckedAt *string `json:"checked_at"`
+
+	// Error Status code or short transport error of the last failed check
+	Error *string `json:"error"`
+
+	// Status up, down, or unknown before the first check
+	Status VoiceServerHealthResponseStatus `json:"status"`
+}
+
+// VoiceServerHealthResponseStatus up, down, or unknown before the first check
+type VoiceServerHealthResponseStatus string
 
 // adminApiKeyContextKey is the context key for adminApiKey security scheme
 type adminApiKeyContextKey string
@@ -2830,6 +3484,12 @@ type DeleteAdminUserMessagesParams struct {
 	DryRun *string `form:"dry_run,omitempty" json:"dry_run,omitempty"`
 }
 
+// ListAdminVoiceRegionsParams defines parameters for ListAdminVoiceRegions.
+type ListAdminVoiceRegionsParams struct {
+	// IncludeServers Whether to include voice servers in the response
+	IncludeServers *string `form:"include_servers,omitempty" json:"include_servers,omitempty"`
+}
+
 // UpdateAdminInstanceConfigJSONRequestBody defines body for UpdateAdminInstanceConfig for application/json ContentType.
 type UpdateAdminInstanceConfigJSONRequestBody = InstanceConfigUpdateRequest
 
@@ -2859,6 +3519,18 @@ type ScheduleAdminUserDeletionJSONRequestBody = AdminUserDeletionScheduleRequest
 
 // DeleteAdminUserMessagesJSONRequestBody defines body for DeleteAdminUserMessages for application/json ContentType.
 type DeleteAdminUserMessagesJSONRequestBody = AdminUserMessageDeleteRequest
+
+// CreateAdminVoiceJoinTokenJSONRequestBody defines body for CreateAdminVoiceJoinToken for application/json ContentType.
+type CreateAdminVoiceJoinTokenJSONRequestBody = CreateVoiceJoinTokenRequest
+
+// CreateAdminVoiceRegionJSONRequestBody defines body for CreateAdminVoiceRegion for application/json ContentType.
+type CreateAdminVoiceRegionJSONRequestBody = CreateVoiceRegionRequest
+
+// CreateAdminVoiceServerJSONRequestBody defines body for CreateAdminVoiceServer for application/json ContentType.
+type CreateAdminVoiceServerJSONRequestBody = CreateVoiceServerRequestBody
+
+// UpdateAdminVoiceServerJSONRequestBody defines body for UpdateAdminVoiceServer for application/json ContentType.
+type UpdateAdminVoiceServerJSONRequestBody = UpdateVoiceServerRequestBody
 
 // Getter for additional properties for Error. Returns the specified
 // element and whether it was found

@@ -5,6 +5,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,7 +14,9 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/distribution/reference"
 	"github.com/docker/compose/v5/pkg/api"
+	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/stack"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 )
 
@@ -109,23 +112,88 @@ func (e *Engine) Volumes(ctx context.Context, project string) ([]Volume, error) 
 	if err != nil {
 		return nil, err
 	}
-	opts := client.VolumeListOptions{}
-	if project != "" {
-		opts.Filters = projectFilter(project)
-	}
-	res, err := c.VolumeList(ctx, opts)
+	items, err := projectVolumes(ctx, c, project)
 	if err != nil {
 		return nil, &Error{Op: "volumes", Class: ClassOf(err), Err: err}
 	}
-	out := make([]Volume, 0, len(res.Items))
-	for _, v := range res.Items {
+	out := make([]Volume, 0, len(items))
+	for _, v := range items {
 		labels := v.Labels
 		if labels == nil {
 			labels = map[string]string{}
 		}
-		out = append(out, Volume{Name: v.Name, Project: labels[api.ProjectLabel], Labels: labels})
+		out = append(out, Volume{Name: v.Name, Project: labels[api.ProjectLabel], Labels: labels, Mountpoint: v.Mountpoint, Device: v.Options["device"], CreatedAt: v.CreatedAt})
 	}
 	slices.SortFunc(out, func(a, b Volume) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+func projectVolumes(ctx context.Context, c client.APIClient, project string) ([]volume.Volume, error) {
+	if project == "" {
+		res, err := c.VolumeList(ctx, client.VolumeListOptions{})
+		return res.Items, err
+	}
+	res, err := c.VolumeList(ctx, client.VolumeListOptions{Filters: projectFilter(project)})
+	if err != nil {
+		return nil, err
+	}
+	named, err := c.VolumeList(ctx, client.VolumeListOptions{Filters: make(client.Filters).Add("name", project+"_")})
+	if err != nil {
+		return nil, err
+	}
+	items := res.Items
+	for _, v := range named.Items {
+		if v.Labels[api.ProjectLabel] == "" && strings.HasPrefix(v.Name, project+"_") {
+			items = append(items, v)
+		}
+	}
+	return items, nil
+}
+
+type PortOwner struct {
+	Number  int
+	Proto   string
+	Project string
+}
+
+func (e *Engine) PublishedHostPorts(ctx context.Context) ([]PortOwner, error) {
+	c, err := e.api()
+	if err != nil {
+		return nil, err
+	}
+	res, err := c.ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil {
+		return nil, &Error{Op: "ports", Class: ClassOf(err), Err: err}
+	}
+	seen := map[PortOwner]bool{}
+	out := make([]PortOwner, 0, len(res.Items))
+	for _, s := range res.Items {
+		project := s.Labels[api.ProjectLabel]
+		for _, p := range s.Ports {
+			if p.PublicPort == 0 {
+				continue
+			}
+			proto := strings.ToLower(p.Type)
+			if proto != "tcp" && proto != "udp" {
+				continue
+			}
+			po := PortOwner{Number: int(p.PublicPort), Proto: proto, Project: project}
+			if seen[po] {
+				continue
+			}
+			seen[po] = true
+			out = append(out, po)
+		}
+	}
+	slices.SortFunc(out, func(a, b PortOwner) int {
+		if a.Number != b.Number {
+			return a.Number - b.Number
+		}
+		if c := strings.Compare(a.Proto, b.Proto); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Project, b.Project)
+	})
 	return out, nil
 }
 
@@ -158,6 +226,103 @@ func (e *Engine) LocalImage(ctx context.Context, ref string) (string, bool, erro
 		return "", false, &Error{Op: "image", Class: ClassOf(err), Err: err}
 	}
 	return res.ID, true, nil
+}
+
+func ImageStore(dir string, e *Engine) string {
+	if e != nil && e.DataRoot != "" {
+		if _, err := os.Stat(e.DataRoot); err == nil {
+			return e.DataRoot
+		}
+	}
+	return dir
+}
+
+func (e *Engine) LocalDiffIDs(ctx context.Context) (map[string]bool, error) {
+	c, err := e.api()
+	if err != nil {
+		return nil, err
+	}
+	list, err := c.ImageList(ctx, client.ImageListOptions{})
+	if err != nil {
+		return nil, &Error{Op: "images", Class: ClassOf(err), Err: err}
+	}
+	out := map[string]bool{}
+	for _, img := range list.Items {
+		res, err := c.ImageInspect(ctx, img.ID)
+		if err != nil {
+			if cerrdefs.IsNotFound(err) {
+				continue
+			}
+			return nil, &Error{Op: "image", Class: ClassOf(err), Err: err}
+		}
+		for _, l := range res.RootFS.Layers {
+			out[l] = true
+		}
+	}
+	return out, nil
+}
+
+func (e *Engine) PullNeed(ctx context.Context, set stack.ImageSet, refs []string, sizes map[string]uint64) uint64 {
+	local, _ := e.LocalDiffIDs(ctx)
+	var missing []string
+	var need uint64
+	for _, ref := range refs {
+		if _, found, err := e.LocalImage(ctx, ref); err == nil && found {
+			continue
+		}
+		if _, known := set.LayersFor(e.Platform, ref); !known && sizes[ref] > 0 {
+			need += 2 * sizes[ref]
+			continue
+		}
+		missing = append(missing, ref)
+	}
+	return need + set.Need(e.Platform, missing, local)
+}
+
+func (e *Engine) UniqueSize(ctx context.Context, refs []string) (uint64, error) {
+	c, err := e.api()
+	if err != nil {
+		return 0, err
+	}
+	ids := map[string]bool{}
+	for _, ref := range refs {
+		id, found, err := e.LocalImage(ctx, ref)
+		if err != nil {
+			return 0, err
+		}
+		if found {
+			ids[id] = true
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	list, err := c.ImageList(ctx, client.ImageListOptions{SharedSize: true})
+	if err != nil {
+		return 0, &Error{Op: "images", Class: ClassOf(err), Err: err}
+	}
+	var n uint64
+	for _, img := range list.Items {
+		if ids[img.ID] && img.SharedSize >= 0 && img.Size > img.SharedSize {
+			n += uint64(img.Size - img.SharedSize)
+		}
+	}
+	return n, nil
+}
+
+func (e *Engine) ImageSize(ctx context.Context, ref string) (uint64, bool, error) {
+	c, err := e.api()
+	if err != nil {
+		return 0, false, err
+	}
+	res, err := c.ImageInspect(ctx, ref)
+	if err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return 0, false, nil
+		}
+		return 0, false, &Error{Op: "image", Class: ClassOf(err), Err: err}
+	}
+	return uint64(max(res.Size, 0)), true, nil
 }
 
 func (e *Engine) RepoDigest(ctx context.Context, image, ref string) (string, error) {

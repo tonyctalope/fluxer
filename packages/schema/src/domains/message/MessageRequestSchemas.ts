@@ -20,6 +20,7 @@ import {
 	withOpenApiType,
 } from '@fluxer/schema/src/primitives/SchemaPrimitives';
 import {AttachmentURLType, URLType} from '@fluxer/schema/src/primitives/UrlValidators';
+import {schemaMetadata} from '@fluxer/schema/src/SchemaMetadata';
 import {z} from 'zod';
 
 const RICH_EMBED_AUTHOR_NAME_MAX_LENGTH = 256 as const;
@@ -84,13 +85,17 @@ export const RichEmbedFooterRequest = z.preprocess(
 
 export type RichEmbedFooterRequest = z.infer<typeof RichEmbedFooterRequest>;
 
-const RichEmbedFieldRequest = z.object({
-	name: createStringType(1, RICH_EMBED_FIELD_NAME_MAX_LENGTH).describe('Name of the field'),
-	value: createStringType(0, RICH_EMBED_FIELD_VALUE_MAX_LENGTH).describe(
-		`Value of the field (0-${RICH_EMBED_FIELD_VALUE_MAX_LENGTH} characters)`,
-	),
-	inline: z.boolean().default(false).describe('Whether the field should display inline'),
-});
+const RichEmbedFieldRequest = z
+	.object({
+		name: createStringType(0, RICH_EMBED_FIELD_NAME_MAX_LENGTH).describe(
+			`Name of the field (0-${RICH_EMBED_FIELD_NAME_MAX_LENGTH} characters)`,
+		),
+		value: createStringType(0, RICH_EMBED_FIELD_VALUE_MAX_LENGTH).describe(
+			`Value of the field (0-${RICH_EMBED_FIELD_VALUE_MAX_LENGTH} characters)`,
+		),
+		inline: z.boolean().default(false).describe('Whether the field should display inline'),
+	})
+	.register(schemaMetadata, {preserveEmptyValues: true});
 
 export const RichEmbedRequest = z.object({
 	url: URLType.nullish().describe('URL of the embed'),
@@ -222,6 +227,7 @@ export const MessageSearchRequest = z.object({
 		.describe('Page number for pagination (ignored when cursor is provided). Use cursor to page beyond this.'),
 	cursor: z
 		.array(z.string())
+		.max(16)
 		.optional()
 		.describe('Opaque cursor for search_after pagination. When provided, page is ignored.'),
 	max_id: SnowflakeType.optional().describe('Maximum message ID to include in results'),
@@ -328,9 +334,10 @@ export type MessageContentRequest = z.infer<typeof MessageContentRequest>;
 export const MessageRequestSchema = z
 	.object({
 		content: MessageContentRequest.nullish(),
-		embeds: z.array(RichEmbedRequest).describe('Array of embed objects to include in the message'),
+		embeds: z.array(RichEmbedRequest).max(100).describe('Array of embed objects to include in the message'),
 		attachments: z
 			.array(z.union([ClientUploadedAttachmentRequest, ClientAttachmentRequest]))
+			.max(100)
 			.describe('Array of attachment objects'),
 		message_reference: MessageReferenceRequest.nullish().describe(
 			'Reference to another message (for replies or forwards)',
@@ -374,6 +381,7 @@ export const MessageUpdateRequestSchema = MessageRequestSchema.pick({
 	).optional(),
 	attachments: z
 		.array(z.union([ClientUploadedAttachmentRequest, ClientAttachmentReferenceRequest]))
+		.max(100)
 		.optional()
 		.describe('Array of attachment objects to keep or add'),
 	message_snapshots: z

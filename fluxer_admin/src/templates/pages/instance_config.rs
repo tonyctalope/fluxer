@@ -25,7 +25,8 @@ use crate::{
         },
         layout::admin_layout,
         pages::{
-            instance_billing::premium_billing_section, instance_branding::branding_section,
+            instance_billing::{distribution_pricing_section, premium_billing_section},
+            instance_branding::branding_section,
             instance_registration::registration_config_section,
         },
     },
@@ -172,7 +173,12 @@ pub fn instance_config_page(
                             &instance_config.registration,
                             instance_config.account_identity.mode,
                         ))
-                        (sso_config_section(base, config_form, &instance_config.sso))
+                        (sso_config_section(
+                            base,
+                            config_form,
+                            &instance_config.sso,
+                            instance_config.account_identity.mode,
+                        ))
                         (accounts_section(
                             base,
                             config_form,
@@ -184,6 +190,8 @@ pub fn instance_config_page(
                                     tag_style: instance_config.account_identity.tag_style,
                                     emails_enabled: instance_config.integrations.email.delivery_state
                                         == EmailDeliveryState::On,
+                                    username_from_provider: instance_config.sso.enabled
+                                        && instance_config.sso.username_from_provider,
                                 },
                                 delivery_state: instance_config.integrations.email.delivery_state,
                                 captcha_provider: instance_config.captcha.provider,
@@ -227,6 +235,11 @@ pub fn instance_config_page(
                             ),
                     ))
                 }
+                (config_group(
+                    "Distribution pricing",
+                    "Channel prices for app builds sold through a store that takes a share of each sale.",
+                    distribution_pricing_section(base, config_form, &instance_config.distribution_pricing),
+                ))
                 (config_group(
                     "Runtime integrations",
                     "Credentials and provider choices that override environment variables at runtime.",
@@ -388,7 +401,7 @@ fn app_public_config_section(
         "The name, color and images people see on the sign-in page, in the apps and in the browser. The preview shows each place they are used.",
         html! {
             div class="space-y-8" {
-                (branding_section(base, config_form, app_public, &host))
+                (branding_section(config, config_form, app_public, &host))
                 div class="space-y-4 border-t border-neutral-200 pt-6" {
                     h3 class="text-sm font-semibold text-neutral-900" { "Legal Documents" }
                     form method="post" action={(base) "/instance-config?action=update_app_legal"} {

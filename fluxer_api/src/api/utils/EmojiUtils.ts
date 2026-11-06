@@ -10,7 +10,7 @@ import type {GuildEmoji} from '@app/api/models/GuildEmoji';
 import type {UserRepository} from '@app/api/user/repositories/UserRepository';
 import {Permissions} from '@fluxer/constants/src/ChannelConstants';
 
-type EmojiGuildRepository = Pick<GuildRepository, 'getEmoji' | 'getEmojiById'>;
+type EmojiGuildRepository = Pick<GuildRepository, 'getEmoji' | 'getEmojiById' | 'findUnique'>;
 type EmojiUserRepository = Pick<UserRepository, 'findUnique'>;
 
 const CUSTOM_EMOJI_MARKDOWN_REGEX = /<(a)?:([^:]+):(\d+)>/g;

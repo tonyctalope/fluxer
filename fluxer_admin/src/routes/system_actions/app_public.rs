@@ -6,7 +6,9 @@ use crate::{
         AppSetupConfigUpdateRequest, CUSTOM_CSS_MAX_CHARS, InstanceConfigUpdateRequest,
     },
     middleware::flash::FlashData,
-    templates::pages::instance_branding::{CUSTOM_CSS_FIELD, UPLOAD_LIMIT_MESSAGE_FIELD},
+    templates::pages::instance_branding::{
+        CUSTOM_CSS_FIELD, TRUSTED_DOMAINS_FIELD, UPLOAD_LIMIT_MESSAGE_FIELD,
+    },
     utils::{
         forms::{MultiValueForm, clean_string},
         plural::group_digits,
@@ -54,10 +56,16 @@ pub(super) fn build_app_public_update(
                 sign_in_backdrop_url: form
                     .contains_key("app_sign_in_backdrop_url")
                     .then(|| form.clean("app_sign_in_backdrop_url")),
+                premium_page_color: form
+                    .contains_key("app_premium_page_color")
+                    .then(|| form.clean("app_premium_page_color")),
                 custom_css,
                 upload_limit_message: form
                     .contains_key(UPLOAD_LIMIT_MESSAGE_FIELD)
                     .then(|| form.clean(UPLOAD_LIMIT_MESSAGE_FIELD)),
+                trusted_domains: form
+                    .contains_key(TRUSTED_DOMAINS_FIELD)
+                    .then(|| form.list_values(TRUSTED_DOMAINS_FIELD)),
                 ..Default::default()
             }),
             setup: Some(AppSetupConfigUpdateRequest {

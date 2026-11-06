@@ -52,6 +52,10 @@ func Eject(inst *Instance, o EjectOptions) error {
 	if err != nil {
 		return err
 	}
+	rendered, err := writePlain(inst)
+	if err != nil {
+		return err
+	}
 	f := envfile.New(inst.Path(EnvFileName))
 	for _, k := range slices.Sorted(maps.Keys(env)) {
 		f.Set(k, env[k])
@@ -66,20 +70,50 @@ func Eject(inst *Instance, o EjectOptions) error {
 			return err
 		}
 	}
+	s.Rendered = rendered
 	s.Ejected = &Ejected{At: time.Now().UTC().Truncate(time.Second), Rexctl: o.Rexctl}
 	s.UpdatedAt = time.Now().UTC().Truncate(time.Second)
-	return s.Save(inst.StatePath())
+	if err := s.Save(inst.StatePath()); err != nil {
+		return err
+	}
+	for name := range rendered {
+		if _, mounted := stack.MountedFiles[name]; !mounted && !inst.OldLayout() {
+			if err := removeIfExists(inst.Generated(name)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func writePlain(inst *Instance) (map[string]string, error) {
+	out := map[string]string{}
+	for _, name := range stack.FileNames() {
+		data, err := os.ReadFile(inst.Generated(name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		data = stack.Plain(name, data)
+		if err := envfile.WriteFileAtomic(inst.Path(name), data, false); err != nil {
+			return nil, err
+		}
+		out[name] = stack.Hash(data)
+	}
+	return out, nil
 }
 
 func composeFileList(inst *Instance) string {
-	var rel []string
-	for _, f := range inst.ComposeFiles() {
-		if r, err := filepath.Rel(inst.Dir, f); err == nil && !strings.HasPrefix(r, "..") {
-			f = r
-		}
-		rel = append(rel, f)
+	names := []string{stack.ComposeFile}
+	for _, o := range inst.Overlays() {
+		names = append(names, stack.OverlayFiles[o])
 	}
-	return strings.Join(rel, string(os.PathListSeparator))
+	if exists(inst.Path(CustomCompose)) {
+		names = append(names, CustomCompose)
+	}
+	return strings.Join(names, string(os.PathListSeparator))
 }
 
 func importEjected(ctx context.Context, dir string, e *engine.Engine, s *State, dry bool) (*State, *ImportReport, error) {
@@ -92,6 +126,10 @@ func importEjected(ctx context.Context, dir string, e *engine.Engine, s *State, 
 		return nil, nil, refusal(fmt.Sprintf("remove %s from %s", what, CustomCompose))
 	}
 	set, err := releaseSet(dir, s.Release)
+	if err != nil {
+		return nil, nil, err
+	}
+	updated, err := handUpdate(ctx, dir, e, s, custom)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -125,6 +163,18 @@ func importEjected(ctx context.Context, dir string, e *engine.Engine, s *State, 
 			r.AdminKeys = slices.Sorted(maps.Keys(s.AdminImport.Values))
 		}
 	}
+	if updated != nil {
+		minted, err := mint(s.Secrets, true)
+		if err != nil {
+			return nil, nil, err
+		}
+		r.Minted, r.Release = minted, updated.Release
+		s.PreviousRelease, s.Release, s.PreviousBackup = s.Release, updated.Release, ""
+		s.Images = Images{Release: updated.Release, Refs: maps.Clone(updated.Images)}
+		if s.Rendered, err = stack.Hashes(stack.Embedded(), stack.OverlaysFor(s.Settings), s.Images.Refs, s.Project); err != nil {
+			return nil, nil, err
+		}
+	}
 	for _, name := range slices.Sorted(maps.Keys(s.Rendered)) {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil || stack.Hash(data) == s.Rendered[name] {
@@ -154,6 +204,57 @@ func importEjected(ctx context.Context, dir string, e *engine.Engine, s *State, 
 		return nil, nil, err
 	}
 	return s, r, nil
+}
+
+func handUpdate(ctx context.Context, dir string, e *engine.Engine, s *State, custom []byte) (*stack.ImageSet, error) {
+	shipped, err := stack.EmbeddedImages()
+	if err != nil || len(shipped.Images) == 0 {
+		return nil, err
+	}
+	newer := shipped.Release == stack.Embedded().Release && VersionBelow(s.Release, shipped.Release)
+	live, err := inspect(ctx, e, s.Project, dir)
+	if err != nil {
+		return nil, err
+	}
+	compose, err := os.ReadFile(filepath.Join(dir, stack.ComposeFile))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	own := stack.ComposeImages(custom)
+	var updated *stack.ImageSet
+	for _, seen := range []map[string]string{stack.ComposeImages(compose), live.images} {
+		maps.DeleteFunc(seen, func(svc, ref string) bool {
+			_, fluxer := shipped.Images[svc]
+			_, mine := own[svc]
+			return !fluxer || mine || strings.Contains(ref, "${")
+		})
+		switch {
+		case sameImages(seen, s.Images.Refs):
+		case newer && sameImages(seen, shipped.Images):
+			updated = &shipped
+		default:
+			return nil, &AdoptError{
+				Msg: "rexctl doesn't know the Fluxer images your instance runs.",
+				Fix: "Download the latest rexctl, then run rexctl takeover again.",
+			}
+		}
+	}
+	return updated, nil
+}
+
+func sameImages(seen, refs map[string]string) bool {
+	for svc, ref := range seen {
+		_, got, _ := strings.Cut(ref, "@")
+		_, want, _ := strings.Cut(refs[svc], "@")
+		if got != "" && want != "" {
+			if got != want {
+				return false
+			}
+		} else if !sameImage(ref, refs[svc]) {
+			return false
+		}
+	}
+	return true
 }
 
 func removedFromEnv(key string, env map[string]string) bool {

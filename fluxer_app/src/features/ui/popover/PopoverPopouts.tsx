@@ -342,13 +342,13 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 				}
 				const targetElement = event.target;
 				const ownerWindow = ownerDocument.defaultView;
-				if (!ownerWindow || !(targetElement instanceof ownerWindow.HTMLElement)) return;
+				if (!ownerWindow || !(targetElement instanceof ownerWindow.Element)) return;
 				if (target.contains(targetElement)) {
 					return;
 				}
 				if (
 					targetElement.closest('[role="dialog"][aria-modal="true"]') ||
-					targetElement.className.includes('backdrop') ||
+					(targetElement.getAttribute('class') ?? '').includes('backdrop') ||
 					targetElement.closest('.focusLock') ||
 					targetElement.closest('[data-native-titlebar]')
 				) {
@@ -476,7 +476,7 @@ export const Popouts: React.FC<PopoutsProps> = observer(({ownerDocument}) => {
 		const prevKeys = prevPopoutKeysRef.current;
 		currentKeys.forEach((key) => {
 			if (!prevKeys.has(key)) {
-				LayerManager.addLayer('popout', key);
+				LayerManager.addLayer('popout', key, undefined, scopeDocument);
 			}
 		});
 		prevKeys.forEach((key) => {
@@ -485,7 +485,7 @@ export const Popouts: React.FC<PopoutsProps> = observer(({ownerDocument}) => {
 			}
 		});
 		prevPopoutKeysRef.current = currentKeys;
-	}, [popouts]);
+	}, [popouts, scopeDocument]);
 	useEffect(() => {
 		return () => {
 			prevPopoutKeysRef.current.forEach((key) => {

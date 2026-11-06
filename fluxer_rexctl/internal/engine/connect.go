@@ -293,6 +293,7 @@ func dial(ctx context.Context, host string) (*Engine, *conn, error) {
 		APIVersion: api.ClientVersion(),
 		OSType:     info.Info.OSType,
 		Desktop:    desktopName(info.Info.OperatingSystem),
+		Platform:   platform(info.Info.Architecture),
 	}
 	for _, comp := range ver.Components {
 		if comp.Name == "Podman Engine" {
@@ -305,11 +306,24 @@ func dial(ctx context.Context, host string) (*Engine, *conn, error) {
 			e.Rootless = true
 		}
 	}
+	if _, local := socketPath(host); local && runtime.GOOS == "linux" && e.Desktop == "" {
+		e.DataRoot = info.Info.DockerRootDir
+	}
 	if e.Kind == Podman {
 		sum := sha256.Sum256([]byte(info.Info.Name + "\n" + info.Info.DockerRootDir))
 		e.ID = "podman:" + hex.EncodeToString(sum[:12])
 	}
 	return e, c, nil
+}
+
+func platform(arch string) string {
+	switch strings.ToLower(arch) {
+	case "x86_64", "amd64":
+		return "linux/amd64"
+	case "aarch64", "arm64":
+		return "linux/arm64"
+	}
+	return ""
 }
 
 func dialError(host string, err error) error {

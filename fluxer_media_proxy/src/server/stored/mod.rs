@@ -16,13 +16,13 @@ use crate::{
         format_policy::{
             OriginalImageRequest, default_transform_quality,
             effective_animated_image_output_format, extension_from_mime,
-            is_browser_displayable_image, is_svg_content_type,
+            is_browser_displayable_image, is_untransformed_fallback_image,
             same_format_loaded_image_request_can_use_original_with_sniff,
         },
         media_operations::spool_stored_media,
         params::{
-            animated_param, asset_manual_format_override, asset_wants_animated, bool_param,
-            filename_from_storage_key,
+            asset_manual_format_override, asset_wants_animated, bool_param,
+            filename_from_storage_key, requests_transform,
         },
         response::{
             GeneratedMediaResponse, MediaResponse, content_disposition_header,
@@ -34,7 +34,7 @@ use crate::{
             CachedVideoTransformRequest, ServeBytesRequest,
             cache::{
                 CachedTransformRequest, cached_transform, cached_transform_hit,
-                coalescer_failure_response,
+                coalescer_error_is_transient, coalescer_failure_response, forbid_storing,
             },
             cache_key::{TransformCacheKeyInput, transform_cache_key},
             cached_video_transform_response,
@@ -226,27 +226,26 @@ struct AssetTransformFailure<'a> {
 
 fn asset_transform_failure_response(failure: AssetTransformFailure<'_>) -> Response {
     let stored_ct = failure.object.content_type.as_str();
+    let sniffed_ct = failure.sniffed_content_type;
     let src_ct = if !stored_ct.starts_with("image/")
-        && is_browser_displayable_image(failure.sniffed_content_type)
+        && (is_browser_displayable_image(sniffed_ct) || sniffed_ct == "image/avif")
     {
-        failure.sniffed_content_type
+        sniffed_ct
     } else {
         stored_ct
     };
-    let src_is_displayable = src_ct.starts_with("image/")
-        && src_ct != "image/avif"
-        && src_ct != "image/heic"
-        && src_ct != "image/heif"
-        && failure.source_format != AssetExtension::Svg
-        && !is_svg_content_type(src_ct);
-    if src_is_displayable && failure.error != CoalescerError::RequestTimeout {
-        return media_response(MediaResponse {
+    if is_untransformed_fallback_image(src_ct, Some(failure.source_format)) {
+        let mut response = media_response(MediaResponse {
             method: failure.method,
             data: failure.object.data.into(),
             content_type: src_ct,
             range_header: failure.range_header,
             disposition: None,
         });
+        if coalescer_error_is_transient(failure.error) {
+            forbid_storing(&mut response);
+        }
+        return response;
     }
     if let Some(response) =
         coalescer_failure_response(failure.error, "coalescer_timeout_asset_image")
@@ -323,13 +322,7 @@ async fn read_attachment(
     headers: &HeaderMap,
 ) -> Response {
     let filename = filename_from_storage_key(key);
-    let animated = animated_param(params, false);
-    let wants_transform = params.contains_key("width")
-        || params.contains_key("height")
-        || params.contains_key("format")
-        || params.contains_key("quality")
-        || animated;
-    if !wants_transform {
+    if !requests_transform(params) {
         return serve_stored_passthrough_stream(
             app,
             method,

@@ -17,7 +17,6 @@ import {getBillingBranding} from '@app/api/stripe/BillingBranding';
 import type {ProductInfo} from '@app/api/stripe/ProductRegistry';
 import {isPastStripeTrialLimit} from '@app/api/stripe/StripeGiftTrialMetadata';
 import {mirrorSubscription} from '@app/api/stripe/StripeMirror';
-import {assertUserCanPurchase} from '@app/api/stripe/services/StripeCheckoutService';
 import type {StripePremiumService} from '@app/api/stripe/services/StripePremiumService';
 import type {GiftTrialExtension, StripeSubscriptionService} from '@app/api/stripe/services/StripeSubscriptionService';
 import {bumpGiftInventory} from '@app/api/user/GiftInventory';
@@ -124,8 +123,6 @@ export class StripeGiftService {
 				},
 				'Loaded redeemer state for gift redemption',
 			);
-			assertUserCanPurchase(user, {needsReceiptEmail: false});
-			Logger.debug({userId, giftCode: code}, 'Redeemer passed gift purchase validation');
 			if (user.premiumType === UserPremiumTypes.LIFETIME) {
 				Logger.debug({userId, giftCode: code}, 'Rejecting redemption for lifetime user');
 				throw new CannotRedeemPlutoniumWithVisionaryError((await getBillingBranding()).premiumName);
@@ -409,7 +406,7 @@ export class StripeGiftService {
 		}
 		if (extension.kind === 'past_trial_limit') {
 			if (!user.premiumWillCancel) {
-				await this.subscriptionService.cancelSubscriptionAtPeriodEnd(user.id);
+				await this.subscriptionService.cancelSubscriptionAtPeriodEnd(user.id, 'gift_past_trial_limit');
 			}
 			Logger.info(
 				{userId: user.id, giftCode: code, stripeSubscriptionId: user.stripeSubscriptionId},

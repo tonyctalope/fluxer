@@ -134,16 +134,18 @@ async fn serve_public_read(app: &Arc<AppState>, read: PublicRead<'_>) -> Respons
                 .attachment_signature()
                 .record(verification.verdict);
             if verification.verdict != Verdict::Valid {
-                if signature_mode == PolicyMode::Enforce {
-                    return attachment_signature::denied_response(verification.verdict);
-                }
-                attachment_signature::log_would_deny(
+                let enforced = signature_mode == PolicyMode::Enforce;
+                attachment_signature::log_refusal(
                     &app.signature_log,
+                    enforced,
                     &method,
-                    verification.verdict,
+                    verification,
                     headers,
                     request_id,
                 );
+                if enforced {
+                    return attachment_signature::denied_response(verification.verdict);
+                }
             }
             checked = Some(verification);
         }
@@ -228,7 +230,9 @@ fn storage_key_decode_response(err: StorageKeyDecodeError) -> Response {
     )
 }
 
-fn without_signature_parameters(params: &HashMap<String, String>) -> HashMap<String, String> {
+pub(in crate::server) fn without_signature_parameters(
+    params: &HashMap<String, String>,
+) -> HashMap<String, String> {
     params
         .iter()
         .filter(|(name, _)| !SIGNATURE_PARAMETER_NAMES.contains(&name.as_str()))

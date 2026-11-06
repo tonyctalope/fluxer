@@ -26,6 +26,7 @@ type Step struct {
 	logs      []string
 	cur       int64
 	total     int64
+	rate      int64
 	waitFor   string
 	since     time.Time
 	announce  bool
@@ -77,6 +78,10 @@ func (s *Step) Done(format string, args ...any) {
 	s.mu.Unlock()
 }
 
+func (s *Step) Info(format string, args ...any) {
+	s.ui.Info(format, args...)
+}
+
 func (s *Step) Log(line string) {
 	s.mu.Lock()
 	s.logs = append(s.logs, line)
@@ -87,6 +92,12 @@ func (s *Step) Log(line string) {
 func (s *Step) Progress(current, total int64) {
 	s.mu.Lock()
 	s.cur, s.total = current, total
+	s.mu.Unlock()
+}
+
+func (s *Step) Rate(bytesPerSecond int64) {
+	s.mu.Lock()
+	s.rate = bytesPerSecond
 	s.mu.Unlock()
 }
 
@@ -103,10 +114,14 @@ func (s *Step) status() (string, string) {
 	if s.total <= 0 && s.cur <= 0 {
 		return title, ""
 	}
-	if s.total <= 0 {
-		return title, Bytes(s.cur)
+	progress := Bytes(s.cur)
+	if s.total > 0 {
+		progress += " of " + Bytes(s.total)
 	}
-	return title, Bytes(s.cur) + " of " + Bytes(s.total)
+	if s.rate > 0 {
+		progress += ", " + Bytes(s.rate) + "/s"
+	}
+	return title, progress
 }
 
 func (s *Step) doneText() string {
@@ -122,6 +137,7 @@ type spinner struct {
 	frame  int
 	width  int
 	drawn  bool
+	held   bool
 	stop   chan struct{}
 	wg     sync.WaitGroup
 }
@@ -158,7 +174,9 @@ func (sp *spinner) run() {
 		case <-t.C:
 			sp.u.mu.Lock()
 			sp.frame++
-			sp.draw()
+			if !sp.held {
+				sp.draw()
+			}
 			sp.u.mu.Unlock()
 		}
 	}
@@ -198,6 +216,22 @@ func (u *UI) stopSpinner(sp *spinner) {
 	sp.clear()
 	u.spin = nil
 	u.mu.Unlock()
+}
+
+func (u *UI) Hold() func() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	sp := u.spin
+	if sp == nil {
+		return func() {}
+	}
+	sp.clear()
+	sp.held = true
+	return func() {
+		u.mu.Lock()
+		sp.held = false
+		u.mu.Unlock()
+	}
 }
 
 func (u *UI) Step(ctx context.Context, title string, fn func(ctx context.Context, s *Step) error) error {

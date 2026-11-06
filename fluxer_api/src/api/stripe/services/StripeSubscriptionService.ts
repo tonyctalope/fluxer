@@ -5,11 +5,19 @@ import type {GiftCodeDurationType} from '@app/api/database/types/PaymentTypes';
 import type {UserRow} from '@app/api/database/types/UserTypes';
 import type {IGatewayService} from '@app/api/infrastructure/IGatewayService';
 import {Logger} from '@app/api/Logger';
+import {getWorkerService} from '@app/api/middleware/ServiceRegistry';
 import {getPaymentDisputeRepository} from '@app/api/middleware/ServiceSingletons';
 import {addGiftCodeDuration} from '@app/api/models/GiftCode';
 import type {User} from '@app/api/models/User';
 import {assertNoOpenPaymentDispute} from '@app/api/payment_disputes/PaymentDisputeReviews';
 import type {StoreEntitlementService} from '@app/api/store_billing/StoreEntitlementService';
+import type {DistributionPriceSync} from '@app/api/stripe/DistributionPriceSync';
+import {
+	findChannelPrice,
+	resolveDistributionRule,
+	resolveListPriceId,
+	subscriptionDistributionMetadata,
+} from '@app/api/stripe/DistributionPricing';
 import type {ProductInfo, RecurringBillingCycle} from '@app/api/stripe/ProductRegistry';
 import {
 	buildGiftTrialMetadata,
@@ -26,11 +34,14 @@ import {
 	loadSubscriptionSchedule,
 } from '@app/api/stripe/StripeSubscriptionPeriod';
 import {extractId} from '@app/api/stripe/StripeUtils';
+import {type BillingCancelSource, enqueueBillingEmail} from '@app/api/stripe/services/BillingEmailService';
+import {CLEARED_CANCEL_METADATA, subscriptionCancelling} from '@app/api/stripe/services/BillingSubscriptionDetails';
 import type {UserRepository} from '@app/api/user/repositories/UserRepository';
 import {dispatchUserUpdate} from '@app/api/user/UserMappers';
 import type {Currency} from '@app/api/utils/CurrencyUtils';
 import {UserPremiumTypes} from '@fluxer/constants/src/UserConstants';
 import {NoActiveSubscriptionError} from '@fluxer/errors/src/domains/payment/NoActiveSubscriptionError';
+import {StripeBillingCycleChangeNeedsResubscribeError} from '@fluxer/errors/src/domains/payment/StripeBillingCycleChangeNeedsResubscribeError';
 import {StripeError} from '@fluxer/errors/src/domains/payment/StripeError';
 import {StripeInvalidProductConfigurationError} from '@fluxer/errors/src/domains/payment/StripeInvalidProductConfigurationError';
 import {StripeNoActiveSubscriptionError} from '@fluxer/errors/src/domains/payment/StripeNoActiveSubscriptionError';
@@ -132,9 +143,31 @@ export class StripeSubscriptionService {
 		private cacheService: ICacheService,
 		private gatewayService: IGatewayService,
 		private storeEntitlementService: StoreEntitlementService | null = null,
+		private distributionPriceSync: DistributionPriceSync | null = null,
 	) {}
 
-	async cancelSubscriptionAtPeriodEnd(userId: UserID): Promise<void> {
+	private distributionMetadataForPriceChange(
+		currentPriceId: string,
+		targetPriceId: string,
+	): Record<string, string> | null {
+		return findChannelPrice(currentPriceId) || findChannelPrice(targetPriceId)
+			? subscriptionDistributionMetadata(targetPriceId)
+			: null;
+	}
+
+	private async resolveCycleChangeTargetPriceId(currentPriceId: string, baseTargetPriceId: string): Promise<string> {
+		const current = findChannelPrice(currentPriceId);
+		if (!current || !this.distributionPriceSync) {
+			return baseTargetPriceId;
+		}
+		const rule = resolveDistributionRule(current.id, 'plutonium_subscription');
+		if (!rule) {
+			return baseTargetPriceId;
+		}
+		return (await this.distributionPriceSync.ensureChannelPrice(rule, baseTargetPriceId)).price_id;
+	}
+
+	async cancelSubscriptionAtPeriodEnd(userId: UserID, source: BillingCancelSource): Promise<void> {
 		if (!this.stripe) {
 			throw new StripePaymentNotAvailableError();
 		}
@@ -148,17 +181,27 @@ export class StripeSubscriptionService {
 		if (user.premiumWillCancel) {
 			throw new StripeSubscriptionAlreadyCancelingError();
 		}
+		const requestedAt = Math.floor(Date.now() / 1000);
+		const metadata = {fluxer_cancel_source: source, fluxer_cancel_requested_at: String(requestedAt)};
 		try {
 			const subscription = await this.stripe.subscriptions.retrieve(user.stripeSubscriptionId, {
 				expand: ['items.data.price', 'schedule'],
 			});
 			const schedule = await loadSubscriptionSchedule(this.stripe, subscription.schedule);
 			if (schedule) {
-				await this.cancelScheduledSubscriptionAtPeriodEnd(user, subscription, schedule);
+				await this.stripe.subscriptions.update(user.stripeSubscriptionId, {metadata});
+				try {
+					await this.cancelScheduledSubscriptionAtPeriodEnd(user, subscription, schedule);
+				} catch (error) {
+					await this.clearCancelSource(subscription.id);
+					throw error;
+				}
+				await this.confirmCancellation(subscription.id, source, requestedAt);
 				return;
 			}
 			const updatedSubscription = await this.stripe.subscriptions.update(user.stripeSubscriptionId, {
 				cancel_at_period_end: true,
+				metadata,
 			});
 			await mirrorSubscription(
 				updatedSubscription,
@@ -173,6 +216,7 @@ export class StripeSubscriptionService {
 				user.toRow(),
 			);
 			await dispatchUserUpdate(this.gatewayService, updatedUser);
+			await this.confirmCancellation(updatedSubscription.id, source, requestedAt);
 			Logger.debug({userId, subscriptionId: user.stripeSubscriptionId}, 'Subscription set to cancel at period end');
 		} catch (error: unknown) {
 			Logger.error(
@@ -181,6 +225,25 @@ export class StripeSubscriptionService {
 			);
 			const message = error instanceof Error ? error.message : 'Failed to cancel subscription';
 			throw new StripeError(message);
+		}
+	}
+
+	private async confirmCancellation(
+		subscriptionId: string,
+		source: BillingCancelSource,
+		requestedAt: number,
+	): Promise<void> {
+		if (source !== 'customer_request') {
+			return;
+		}
+		try {
+			await enqueueBillingEmail(getWorkerService(), {
+				kind: 'subscription_cancel_scheduled',
+				id: subscriptionId,
+				requestedAt,
+			});
+		} catch (error) {
+			Logger.error({error, subscriptionId}, 'Cancelled a subscription but could not queue the confirmation email');
 		}
 	}
 
@@ -260,6 +323,28 @@ export class StripeSubscriptionService {
 		await this.storeEntitlementService?.reapplyAfterStripeChange(userId);
 	}
 
+	private async clearCancelSource(subscriptionId: string): Promise<void> {
+		try {
+			await this.stripe?.subscriptions.update(subscriptionId, {metadata: CLEARED_CANCEL_METADATA});
+		} catch (error) {
+			Logger.error({error, subscriptionId}, 'Could not clear the cancellation source after a failed cancellation');
+		}
+	}
+
+	private async confirmGiftApplied(subscription: Stripe.Subscription, trialEnd: number): Promise<void> {
+		if (subscriptionCancelling(subscription, null)) {
+			return;
+		}
+		try {
+			await enqueueBillingEmail(getWorkerService(), {kind: 'gift_applied', id: subscription.id, trialEnd});
+		} catch (error) {
+			Logger.error(
+				{error, subscriptionId: subscription.id},
+				'Applied a gift but could not queue the confirmation email',
+			);
+		}
+	}
+
 	private pullGiftExtensionBackToNow(giftEnd: Date | null, paidUntil: Date | null, now: Date): Date | null {
 		if (!giftEnd || !paidUntil || paidUntil.getTime() <= now.getTime() || giftEnd.getTime() < paidUntil.getTime()) {
 			return giftEnd;
@@ -296,9 +381,16 @@ export class StripeSubscriptionService {
 				});
 			}
 			const clearCancellationParams = this.getClearCancellationUpdateParams(subscription);
-			const reactivatedSubscription = clearCancellationParams
-				? await this.stripe.subscriptions.update(user.stripeSubscriptionId, clearCancellationParams)
-				: subscription;
+			const hasCancelSource = Boolean(
+				subscription.metadata?.fluxer_cancel_source || subscription.metadata?.fluxer_cancel_requested_at,
+			);
+			const reactivatedSubscription =
+				clearCancellationParams || hasCancelSource
+					? await this.stripe.subscriptions.update(user.stripeSubscriptionId, {
+							...clearCancellationParams,
+							metadata: CLEARED_CANCEL_METADATA,
+						})
+					: subscription;
 			await mirrorSubscription(
 				reactivatedSubscription,
 				user.id,
@@ -400,11 +492,14 @@ export class StripeSubscriptionService {
 		await assertNoOpenPaymentDispute(getPaymentDisputeRepository(), user.id);
 		try {
 			const subscription = await this.stripe.subscriptions.retrieve(user.stripeSubscriptionId, {
-				expand: ['schedule'],
+				expand: ['schedule', 'default_payment_method'],
 			});
 			const item = getPrimarySubscriptionItem(subscription);
 			if (!item?.id || !item.price?.recurring || !item.price.currency) {
 				throw new StripeError('Subscription is missing a recurring primary item');
+			}
+			if (isMandatePaidSubscription(subscription)) {
+				throw new StripeBillingCycleChangeNeedsResubscribeError();
 			}
 			const currentBillingCycle = this.getBillingCycleFromInterval(item.price.recurring.interval);
 			if (!currentBillingCycle) {
@@ -417,10 +512,11 @@ export class StripeSubscriptionService {
 				);
 				return;
 			}
-			const targetPriceId = this.productRegistry.getRecurringSubscriptionPriceId(billingCycle, item.price.currency);
-			if (!targetPriceId) {
+			const baseTargetPriceId = this.productRegistry.getRecurringSubscriptionPriceId(billingCycle, item.price.currency);
+			if (!baseTargetPriceId) {
 				throw new StripeInvalidProductConfigurationError();
 			}
+			const targetPriceId = await this.resolveCycleChangeTargetPriceId(item.price.id, baseTargetPriceId);
 			const scheduledChange = await loadSubscriptionSchedule(this.stripe, subscription.schedule);
 			if (scheduledChange && this.subscriptionScheduleHasFutureTargetPrice(scheduledChange, targetPriceId)) {
 				const patch: Record<string, unknown> = {
@@ -448,7 +544,7 @@ export class StripeSubscriptionService {
 				);
 				return;
 			}
-			if (effectiveAt === 'period_end') {
+			if (effectiveAt === 'period_end' || currentBillingCycle === 'yearly') {
 				await this.scheduleBillingCycleChangeAtPeriodEnd({
 					user,
 					subscription,
@@ -460,8 +556,11 @@ export class StripeSubscriptionService {
 				return;
 			}
 			const clearCancellationParams = this.getClearCancellationUpdateParams(subscription) ?? {};
+			const distributionMetadata = this.distributionMetadataForPriceChange(item.price.id, targetPriceId);
+			const distributionMetadataPatch = distributionMetadata ? {metadata: distributionMetadata} : {};
 			const updatedSubscription = await this.stripe.subscriptions.update(user.stripeSubscriptionId, {
 				...clearCancellationParams,
+				...distributionMetadataPatch,
 				items: [
 					{
 						id: item.id,
@@ -507,7 +606,11 @@ export class StripeSubscriptionService {
 				{error, userId, subscriptionId: user.stripeSubscriptionId, billingCycle, effectiveAt},
 				'Failed to change subscription billing cycle',
 			);
-			if (error instanceof StripeError || error instanceof StripeInvalidProductConfigurationError) {
+			if (
+				error instanceof StripeError ||
+				error instanceof StripeInvalidProductConfigurationError ||
+				error instanceof StripeBillingCycleChangeNeedsResubscribeError
+			) {
 				throw error;
 			}
 			const message = error instanceof Error ? error.message : 'Failed to change subscription billing cycle';
@@ -558,7 +661,8 @@ export class StripeSubscriptionService {
 				return {status: 'ineligible', reason: 'unsupported_subscription'};
 			}
 			const currency = item.price.currency.toUpperCase() as Currency;
-			const targetPriceId = this.productRegistry.getRecurringSubscriptionPriceId(billingCycle, currency);
+			const baseListPriceId = this.productRegistry.getRecurringSubscriptionPriceId(billingCycle, currency);
+			const targetPriceId = resolveListPriceId(item.price.id, baseListPriceId);
 			if (!targetPriceId) {
 				return {status: 'ineligible', reason: 'no_list_price'};
 			}
@@ -724,6 +828,10 @@ export class StripeSubscriptionService {
 				first_invoice_credit_source: 'current_period_payment',
 			};
 		}
+		const distributionMetadata = this.distributionMetadataForPriceChange(item.price.id, targetPriceId);
+		if (distributionMetadata) {
+			targetPhase.metadata = {...targetPhase.metadata, ...distributionMetadata};
+		}
 		await this.stripe.subscriptionSchedules.update(schedule.id, {
 			end_behavior: clearCancellation ? 'release' : schedule.end_behavior,
 			proration_behavior: 'none',
@@ -883,12 +991,14 @@ export class StripeSubscriptionService {
 			return {
 				cancel_at_period_end: false,
 				proration_behavior: 'none',
+				metadata: CLEARED_CANCEL_METADATA,
 			};
 		}
 		if (subscription.cancel_at != null) {
 			return {
 				cancel_at: null,
 				proration_behavior: 'none',
+				metadata: CLEARED_CANCEL_METADATA,
 			};
 		}
 		return null;
@@ -1140,7 +1250,8 @@ export class StripeSubscriptionService {
 			return null;
 		}
 		const currency = price.currency.toUpperCase() as Currency;
-		const listPriceId = this.productRegistry.getRecurringSubscriptionPriceId(billingCycle, currency);
+		const baseListPriceId = this.productRegistry.getRecurringSubscriptionPriceId(billingCycle, currency);
+		const listPriceId = resolveListPriceId(price.id, baseListPriceId);
 		const listAmountMinor = listPriceId ? await this.getListPriceAmountMinor(listPriceId) : null;
 		const isGrandfathered = listPriceId != null && listPriceId !== price.id;
 		return {
@@ -1308,6 +1419,7 @@ export class StripeSubscriptionService {
 			);
 			await this.cacheService.set(appliedKey, true, seconds('365 days'));
 			Logger.debug({userId: user.id, idempotencyKey, appliedKey}, 'Gift trial applied sentinel set');
+			await this.confirmGiftApplied(trialExtendedSubscription, newTrialEndUnix);
 			Logger.debug(
 				{
 					userId: user.id,
@@ -1389,4 +1501,20 @@ export class StripeSubscriptionService {
 		}
 		return null;
 	}
+}
+
+const MANDATE_PAYMENT_METHOD_TYPES: ReadonlySet<string> = new Set(['pix', 'upi']);
+
+function isMandatePaidSubscription(subscription: Stripe.Subscription): boolean {
+	const paymentMethod = subscription.default_payment_method;
+	if (paymentMethod && typeof paymentMethod === 'object' && MANDATE_PAYMENT_METHOD_TYPES.has(paymentMethod.type)) {
+		return true;
+	}
+	const options = subscription.payment_settings?.payment_method_options;
+	if (options?.pix || options?.upi) {
+		return true;
+	}
+	return (subscription.payment_settings?.payment_method_types ?? []).some((type) =>
+		MANDATE_PAYMENT_METHOD_TYPES.has(type),
+	);
 }

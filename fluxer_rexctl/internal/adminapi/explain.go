@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/ui"
@@ -32,6 +33,10 @@ func Explain(err error) error {
 	switch {
 	case errors.Is(err, ErrSchemaMismatch):
 		return &ui.ExitError{Code: ui.ExitRefused, Msg: "This rexctl and the Fluxer running here don't match.", Fix: "Run rexctl upgrade.", Err: err}
+	case errors.Is(err, ErrNoFullReindex):
+		return &ui.ExitError{Code: ui.ExitRefused, Msg: "The Fluxer release running here can't rebuild search in one go.", Fix: `Run rexctl upgrade, or use the "Reindex" buttons on the admin panel's search index page and "Refresh Channel Messages" on each community's page there.`, Err: err}
+	case errors.Is(err, ErrSearchOff):
+		return &ui.ExitError{Code: ui.ExitFailed, Msg: "Search is turned off on this instance.", Fix: "Run rexctl doctor to see what's wrong.", Err: err}
 	case errors.Is(err, ErrNoRelay):
 		return &ui.ExitError{Code: ui.ExitRefused, Msg: "The Fluxer release running here can't take commands from rexctl.", Fix: "Run rexctl upgrade.", Err: err}
 	case errors.As(err, &relay):
@@ -90,5 +95,36 @@ func explainAPI(e *APIError) error {
 	if msg == "" {
 		msg = "Fluxer didn't accept that."
 	}
-	return &ui.ExitError{Code: ui.ExitFailed, Msg: msg, Err: e}
+	return &ui.ExitError{Code: ui.ExitFailed, Msg: msg, Fix: fieldFix(e.Fields), Err: e}
+}
+
+const SSOPrivateFix = "If the provider is on your own network, run rexctl config set sso.allow_private_addresses true, then try again."
+
+const SSOHostnameFix = "Check the hostname is spelled right and resolves from the Fluxer server."
+
+const SSODiscoveryFix = "Check sso.issuer with rexctl config get sso.issuer, or turn on Require SSO once the provider is back."
+
+const SSOIssuerRequiredFix = "Set it with rexctl config set sso.issuer <issuer URL>, or turn SSO off with rexctl config set sso.enabled false."
+
+const SSOIssuerChangeFix = "If it's the same provider at a new address, run rexctl config set sso.issuer <issuer URL> --migrate-identities. If it's a different provider, use --no-migrate-identities."
+
+var ssoURLFields = []string{"issuer", "authorization_url", "token_url", "userinfo_url", "jwks_url"}
+
+func fieldFix(fields []FieldError) string {
+	for _, f := range fields {
+		if f.Code == "URL_NOT_PUBLICLY_ROUTABLE" && slices.Contains(ssoURLFields, f.Path) {
+			return SSOPrivateFix
+		}
+		switch f.Code {
+		case "URL_HOSTNAME_NOT_RESOLVABLE":
+			return SSOHostnameFix
+		case "SSO_DISCOVERY_FAILED":
+			return SSODiscoveryFix
+		case "SSO_ISSUER_REQUIRED":
+			return SSOIssuerRequiredFix
+		case "SSO_ISSUER_CHANGE_HAS_IDENTITIES":
+			return SSOIssuerChangeFix
+		}
+	}
+	return ""
 }

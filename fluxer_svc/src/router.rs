@@ -3,8 +3,9 @@
 use crate::config::ServiceConfig;
 use crate::hash_ring::HashRing;
 use crate::metrics::ServiceMetrics;
+use crate::shard::{Endpoint, ShardState, ShardStateNotice, control_subject, serve};
 use crate::transport::{
-    Transport, TransportMessage, TransportSubscriber, reply_bytes, reply_json_error,
+    NoResponders, Transport, TransportMessage, TransportSubscriber, reply_bytes, reply_json_error,
 };
 use anyhow::Context;
 use futures::future::{BoxFuture, FutureExt, Shared};
@@ -13,11 +14,15 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::{Semaphore, TryAcquireError};
-use tokio::task::JoinSet;
-use tracing::{debug, info, warn};
+use tokio::sync::Notify;
+use tracing::{debug, warn};
 
 pub const SHARD_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const ROUTER_DRAIN_LINGER: Duration = Duration::from_secs(2);
+const DRAINING_NOTICE_TTL: Duration = Duration::from_secs(30);
+const DRAINING_BROADCAST_TIMEOUT: Duration = Duration::from_millis(500);
+const SHARD_RETRY_INTERVAL: Duration = Duration::from_millis(250);
+const SHARD_STATE_RESUBSCRIBE_DELAY: Duration = Duration::from_secs(1);
 const MAX_BROADCAST_CONCURRENCY: usize = 32;
 pub(crate) const MAX_ROUTER_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 type InflightKey = (String, String);
@@ -32,8 +37,8 @@ pub trait RouterService: Send + Sync + 'static {
 
     fn service_name(&self) -> &str;
     fn route_key(request: &Self::Request) -> String;
-    fn shard_for(&self, request: &Self::Request, ring: &HashRing) -> u32 {
-        ring.owner(&Self::route_key(request))
+    fn shard_candidates(&self, request: &Self::Request, ring: &HashRing) -> Vec<u32> {
+        ring.ranked(&Self::route_key(request))
     }
     fn coalesce_key(_request: &Self::Request) -> Option<String> {
         None
@@ -52,45 +57,125 @@ pub trait RouterService: Send + Sync + 'static {
     fn l1_insert(&self, _req: &Self::Request, _resp: &Self::Response) {}
 }
 
-fn shard_subject<S: RouterService>(service: &S, ring: &HashRing, request: &S::Request) -> String {
-    let shard_id = service.shard_for(request, ring);
-    format!("svc.{}.shard.{shard_id}", service.service_name())
+#[derive(Default)]
+struct ShardStates {
+    draining: Mutex<HashMap<u32, Instant>>,
+    ready: Notify,
 }
 
-async fn forward_to_shard<S: RouterService>(
-    transport: &impl Transport,
-    subject: &str,
-    request: &S::Request,
-) -> anyhow::Result<Vec<u8>> {
-    let msgpack_payload = rmp_serde::to_vec_named(request)
-        .map_err(|e| anyhow::anyhow!("failed to encode request as msgpack: {e}"))?;
-    transport
-        .request(subject, &msgpack_payload, SHARD_REQUEST_TIMEOUT)
-        .await
+impl ShardStates {
+    fn apply(&self, notice: ShardStateNotice) {
+        let mut draining = self.draining.lock().unwrap();
+        match notice.state {
+            ShardState::Draining => {
+                draining.insert(notice.shard_id, Instant::now());
+            }
+            ShardState::Ready => {
+                draining.remove(&notice.shard_id);
+                self.ready.notify_waiters();
+            }
+        }
+    }
+
+    fn forget(&self) {
+        self.draining.lock().unwrap().clear();
+        self.ready.notify_waiters();
+    }
+
+    fn is_draining(&self, shard_id: u32) -> bool {
+        self.draining
+            .lock()
+            .unwrap()
+            .get(&shard_id)
+            .is_some_and(|since| since.elapsed() < DRAINING_NOTICE_TTL)
+    }
 }
 
-async fn forward_to_shard_verbatim(
-    transport: &impl Transport,
-    subject: &str,
-    payload: &[u8],
-) -> anyhow::Result<Vec<u8>> {
-    transport
-        .request(subject, payload, SHARD_REQUEST_TIMEOUT)
-        .await
+async fn listen_for_shard_states(
+    transport: impl Transport,
+    service_name: String,
+    states: Arc<ShardStates>,
+) {
+    let subject = control_subject(&service_name);
+    loop {
+        let mut sub = match transport.subscribe(&subject).await {
+            Ok(sub) => sub,
+            Err(error) => {
+                warn!(error = %error, subject, "failed to subscribe to shard state notices");
+                tokio::time::sleep(SHARD_STATE_RESUBSCRIBE_DELAY).await;
+                continue;
+            }
+        };
+        loop {
+            tokio::select! {
+                msg = sub.next() => {
+                    let Some(msg) = msg else {
+                        break;
+                    };
+                    match serde_json::from_slice::<ShardStateNotice>(msg.payload()) {
+                        Ok(notice) => {
+                            debug!(shard_id = notice.shard_id, state = ?notice.state, "shard state notice");
+                            states.apply(notice);
+                        }
+                        Err(error) => warn!(error = %error, "invalid shard state notice"),
+                    }
+                }
+                _ = transport.wait_for_reconnect() => states.forget(),
+            }
+        }
+        warn!(
+            subject,
+            "shard state subscription stream ended, will re-subscribe"
+        );
+    }
 }
 
 async fn dispatch_to_shard<S: RouterService>(
     transport: &impl Transport,
     service: &S,
     ring: &HashRing,
+    states: &ShardStates,
     request: &S::Request,
     payload: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
-    let subject = shard_subject(service, ring, request);
-    if S::CACHES_RESPONSES {
-        forward_to_shard::<S>(transport, &subject, request).await
+    let msgpack_payload;
+    let payload = if S::CACHES_RESPONSES {
+        msgpack_payload =
+            rmp_serde::to_vec_named(request).context("failed to encode request as msgpack")?;
+        msgpack_payload.as_slice()
     } else {
-        forward_to_shard_verbatim(transport, &subject, payload).await
+        payload
+    };
+    let candidates = service.shard_candidates(request, ring);
+    let deadline = tokio::time::Instant::now() + SHARD_REQUEST_TIMEOUT;
+    loop {
+        let ready = states.ready.notified();
+        tokio::pin!(ready);
+        ready.as_mut().enable();
+        for &shard_id in &candidates {
+            if states.is_draining(shard_id) {
+                continue;
+            }
+            let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if timeout.is_zero() {
+                break;
+            }
+            let subject = format!("svc.{}.shard.{shard_id}", service.service_name());
+            match transport.request(&subject, payload, timeout).await {
+                Err(error) if error.is::<NoResponders>() => {
+                    debug!(shard_id, "shard has no responders");
+                }
+                result => return result,
+            }
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            anyhow::bail!("no shard became available for the request");
+        }
+        tokio::select! {
+            _ = ready => {}
+            _ = tokio::time::sleep_until(deadline.min(now + SHARD_RETRY_INTERVAL)) => {}
+        }
     }
 }
 
@@ -98,6 +183,7 @@ async fn forward_to_all_shards<S: RouterService>(
     transport: &impl Transport,
     service: &S,
     ring: &HashRing,
+    states: &ShardStates,
     request: &S::Request,
 ) -> anyhow::Result<Vec<u8>> {
     let payload = rmp_serde::to_vec_named(request)
@@ -106,21 +192,31 @@ async fn forward_to_all_shards<S: RouterService>(
     let service_name = service.service_name();
     let deadline = tokio::time::Instant::now() + SHARD_REQUEST_TIMEOUT;
     let request_shard = |shard_id| async move {
-        let timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let mut timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
         if timeout.is_zero() {
             anyhow::bail!("broadcast deadline expired before shard {shard_id}");
         }
+        let draining = states.is_draining(shard_id);
+        if draining {
+            timeout = timeout.min(DRAINING_BROADCAST_TIMEOUT);
+        }
         let subject = format!("svc.{service_name}.shard.{shard_id}");
-        let response_bytes = transport
-            .request(&subject, payload, timeout)
-            .await
-            .with_context(|| format!("broadcast request to shard {shard_id} failed"))?;
+        let response_bytes = match transport.request(&subject, payload, timeout).await {
+            Ok(response_bytes) => response_bytes,
+            Err(error) if draining || error.is::<NoResponders>() => {
+                debug!(shard_id, error = %error, "broadcast skipped a shard that is gone");
+                return anyhow::Ok(None);
+            }
+            Err(error) => {
+                return Err(error.context(format!("broadcast request to shard {shard_id} failed")));
+            }
+        };
         let response = rmp_serde::from_slice::<S::Response>(&response_bytes)
             .with_context(|| format!("invalid broadcast response from shard {shard_id}"))?;
         if !S::is_broadcast_acknowledgement(&response) {
             anyhow::bail!("unexpected broadcast acknowledgement from shard {shard_id}");
         }
-        anyhow::Ok(response)
+        anyhow::Ok(Some(response))
     };
 
     let mut shard_ids = 0..ring.shard_count();
@@ -133,7 +229,8 @@ async fn forward_to_all_shards<S: RouterService>(
     let mut first_error = None;
     while let Some(result) = pending.next().await {
         match result {
-            Ok(response) => acknowledgement = Some(response),
+            Ok(Some(response)) => acknowledgement = Some(response),
+            Ok(None) => {}
             Err(error) => {
                 first_error.get_or_insert(error);
             }
@@ -210,6 +307,7 @@ async fn handle_router_request<S, T>(
     transport: T,
     service: Arc<S>,
     ring: Arc<HashRing>,
+    states: Arc<ShardStates>,
     inflight: Inflight<Vec<u8>, anyhow::Error>,
     metrics: Arc<ServiceMetrics>,
 ) where
@@ -255,11 +353,19 @@ async fn handle_router_request<S, T>(
     metrics.record_shard_forward();
 
     let coalesce_result = if broadcast {
-        forward_to_all_shards::<S>(&transport, service.as_ref(), ring.as_ref(), &request).await
+        forward_to_all_shards::<S>(
+            &transport,
+            service.as_ref(),
+            ring.as_ref(),
+            states.as_ref(),
+            &request,
+        )
+        .await
     } else if let Some(coalesce_key) = S::coalesce_key(&request) {
         let forward_transport = transport.clone();
         let forward_service = service.clone();
         let forward_ring = ring.clone();
+        let forward_states = states.clone();
         let forward_request = request.clone();
         let forward_payload = if S::CACHES_RESPONSES {
             Vec::new()
@@ -272,6 +378,7 @@ async fn handle_router_request<S, T>(
                 &forward_transport,
                 forward_service.as_ref(),
                 forward_ring.as_ref(),
+                forward_states.as_ref(),
                 &forward_request,
                 &forward_payload,
             )
@@ -284,6 +391,7 @@ async fn handle_router_request<S, T>(
             &transport,
             service.as_ref(),
             ring.as_ref(),
+            states.as_ref(),
             &request,
             msg.payload(),
         )
@@ -337,103 +445,43 @@ where
 {
     let service = Arc::new(service);
     let ring = Arc::new(HashRing::new(config.shard_count));
+    let states = Arc::new(ShardStates::default());
     let name = service.service_name().to_owned();
-    let request_subject = format!("svc.{name}");
-    let queue_group = format!("{name}-router");
 
     let metrics = Arc::new(ServiceMetrics::default());
     metrics.init();
 
     let inflight = Inflight::<Vec<u8>, anyhow::Error>::default();
+    let handler_transport = transport.clone();
+    let handler_metrics = metrics.clone();
+    let handler_states = states.clone();
+    let requests = serve(
+        config,
+        Endpoint {
+            subject: format!("svc.{name}"),
+            queue_group: Some(format!("{name}-router")),
+            name: name.clone(),
+            announce: None,
+            linger: ROUTER_DRAIN_LINGER,
+        },
+        metrics,
+        transport.clone(),
+        move |msg| {
+            handle_router_request::<S, _>(
+                msg,
+                handler_transport.clone(),
+                service.clone(),
+                ring.clone(),
+                handler_states.clone(),
+                inflight.clone(),
+                handler_metrics.clone(),
+            )
+        },
+        crate::shutdown::wait_for_shutdown(),
+    );
 
-    let mut tasks = JoinSet::new();
-
-    let health_addr = config.listen_addr;
-    let router_serving = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let http_serving = router_serving.clone();
-    let http_metrics = metrics.clone();
-    let http_name = name.clone();
-    tasks.spawn(async move {
-        crate::server::run_http(health_addr, http_serving, http_metrics, http_name).await
-    });
-
-    let req_transport = transport.clone();
-    let req_service = service.clone();
-    let req_queue = queue_group.clone();
-    let req_metrics = metrics.clone();
-    let req_permits = Arc::new(Semaphore::new(config.max_concurrent_requests));
-    tasks.spawn(async move {
-        let mut requests = JoinSet::new();
-        loop {
-            let mut sub = req_transport
-                .subscribe_queue(&request_subject, &req_queue)
-                .await?;
-            info!(
-                subject = request_subject,
-                max_concurrent_requests = req_permits.available_permits(),
-                "router listening for requests"
-            );
-
-            loop {
-                let msg = tokio::select! {
-                    result = requests.join_next(), if !requests.is_empty() => {
-                        if let Err(err) = result.expect("nonempty router request set") {
-                            warn!(error = %err, "router request task failed");
-                        }
-                        continue;
-                    }
-                    msg_opt = sub.next() => {
-                        let Some(msg) = msg_opt else {
-                            warn!("router request subscription stream ended, will re-subscribe");
-                            break;
-                        };
-                        msg
-                    }
-                };
-
-                while let Some(result) = requests.try_join_next() {
-                    if let Err(err) = result {
-                        warn!(error = %err, "router request task failed");
-                    }
-                }
-                let permit = match req_permits.clone().try_acquire_owned() {
-                    Ok(permit) => permit,
-                    Err(TryAcquireError::NoPermits) => {
-                        debug!("shedding router request, no permits available");
-                        req_metrics.record_request();
-                        req_metrics.record_request_error();
-                        reply_json_error(&msg, &req_transport, "overloaded").await;
-                        continue;
-                    }
-                    Err(TryAcquireError::Closed) => return anyhow::Ok(()),
-                };
-                let transport = req_transport.clone();
-                let service = req_service.clone();
-                let ring = ring.clone();
-                let inflight = inflight.clone();
-                let metrics = req_metrics.clone();
-                requests.spawn(async move {
-                    let _permit = permit;
-                    handle_router_request::<S, _>(msg, transport, service, ring, inflight, metrics)
-                        .await;
-                });
-            }
-        }
-    });
-
-    tokio::select! {
-        result = tasks.join_next() => {
-            match result {
-                Some(Ok(Ok(()))) => Ok(()),
-                Some(Ok(Err(error))) => Err(error),
-                Some(Err(error)) => Err(error.into()),
-                None => Ok(()),
-            }
-        }
-        _ = crate::shutdown::wait_for_shutdown() => {
-            info!("router shutting down");
-            router_serving.store(false, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
-        }
-    }
+    let listener = tokio::spawn(listen_for_shard_states(transport, name, states));
+    let result = requests.await;
+    listener.abort();
+    result
 }

@@ -16,9 +16,11 @@ import {DefaultUserOnly, LoginRequired} from '@app/api/middleware/AuthMiddleware
 import {LocalAuthMiddleware} from '@app/api/middleware/LocalAuthMiddleware';
 import {requireOAuth2ScopeForBearer} from '@app/api/middleware/OAuth2ScopeMiddleware';
 import {RateLimitMiddleware} from '@app/api/middleware/RateLimitMiddleware';
+import {jsonAssetBodyLimit, RequestBodyLimit} from '@app/api/middleware/RequestBodyLimitMiddleware';
 import {OpenAPI} from '@app/api/middleware/ResponseTypeMiddleware';
 import {
 	assertCredentialsNotSsoManaged,
+	assertUsernameNotSsoManaged,
 	SsoManagedCredentialsMiddleware,
 } from '@app/api/middleware/SsoManagedCredentialsMiddleware';
 import {SudoModeMiddleware} from '@app/api/middleware/SudoModeMiddleware';
@@ -67,6 +69,7 @@ import {
 	RegisterMobileDeviceRequest,
 	SubscriptionIdParam,
 	UnregisterMobileDeviceRequest,
+	UserAccountDeleteRequest,
 	UserGuildSettingsUpdateRequest,
 	UserNoteUpdateRequest,
 	UserPasswordUpdateRequest,
@@ -89,6 +92,7 @@ import {
 	PushSubscribeResponse,
 	PushSubscriptionsListResponse,
 	RegisterMobileDeviceResponse,
+	UserAccountDeleteResponse,
 	UserGuildSettingsResponse,
 	UserNoteResponse,
 	UserNotesRecordResponse,
@@ -131,6 +135,7 @@ export function UserAccountController(app: HonoApp) {
 	);
 	app.patch(
 		'/users/@me',
+		RequestBodyLimit(jsonAssetBodyLimit({avatar: 1, banner: 1})),
 		RateLimitMiddleware(RateLimitConfigs.USER_UPDATE_SELF),
 		LoginRequired,
 		DefaultUserOnly,
@@ -153,6 +158,7 @@ export function UserAccountController(app: HonoApp) {
 			if (rawBody.new_password !== undefined || rawBody.email_token !== undefined) {
 				await assertCredentialsNotSsoManaged(ctx.get('ssoService'), user);
 			}
+			await assertUsernameNotSsoManaged(ctx.get('ssoService'), user, rawBody);
 			return ctx.json(
 				await userAccountRequestService.updateCurrentUser({
 					ctx,
@@ -750,7 +756,7 @@ export function UserAccountController(app: HonoApp) {
 			const updatedSettings = await ctx.get('userService').accountService.settingsService.updateSettings({
 				userId: user.id,
 				data: ctx.req.valid('json'),
-				dateOfBirth: user.dateOfBirth,
+				ageUser: user,
 				flags: user.flags,
 			});
 			return ctx.json(mapUserSettingsToResponse({settings: updatedSettings}));
@@ -947,24 +953,27 @@ export function UserAccountController(app: HonoApp) {
 		LoginRequired,
 		DefaultUserOnly,
 		SudoModeMiddleware,
-		Validator('json', SudoVerificationSchema),
+		Validator('json', UserAccountDeleteRequest),
 		OpenAPI({
 			operationId: 'delete_current_user_account',
 			summary: 'Delete current user account',
-			responseSchema: null,
-			statusCode: 204,
+			responseSchema: UserAccountDeleteResponse,
+			statusCode: 200,
 			security: ['bearerToken', 'sessionToken'],
 			tags: ['Users'],
 			description:
-				"Permanently deletes the current user's account and all associated data. Requires sudo mode verification. This action is irreversible and will remove all user data, messages, and connections.",
+				"Schedules the deletion of the current user's account and personal data after the instance's grace period, or right away when immediate is true. Signing in before the deletion runs cancels it. Messages the account sent are anonymized unless delete_messages is true, in which case they are deleted with the account. Requires sudo mode verification. The response has the time the deletion runs.",
 		}),
 		async (ctx) => {
 			const userService = ctx.get('userService');
 			const user = ctx.get('user');
 			const body = ctx.req.valid('json');
 			await requireSudoMode(ctx, user, body);
-			await userService.accountService.lifecycleService.selfDelete(user.id);
-			return ctx.body(null, 204);
+			const pendingDeletionAt = await userService.accountService.lifecycleService.selfDelete(user.id, {
+				immediate: body.immediate === true,
+				deleteMessages: body.delete_messages === true,
+			});
+			return ctx.json({pending_deletion_at: pendingDeletionAt.toISOString()}, 200);
 		},
 	);
 	app.post(

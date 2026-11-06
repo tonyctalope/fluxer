@@ -1,8 +1,65 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+export type PlutoniumPlan = 'monthly' | 'yearly' | 'gift_1_month' | 'gift_1_year';
+
+export type BillingPaymentProblem = 'declined' | 'action_required';
+
+export type YesNo = 'yes' | 'no';
+
+type BillingRecurringPlanName = 'monthly' | 'yearly';
+
+type BillingPaymentMethodKind = 'card' | 'plain_card' | 'named' | 'none';
+
+interface SellerVariables {
+	sellerAddress: string;
+	sellerEmail: string;
+}
+
+interface PaymentMethodVariables {
+	method: BillingPaymentMethodKind;
+	brand: string;
+	last4: string;
+	methodName: string;
+}
+
+interface UpcomingChargeVariables extends SellerVariables, PaymentMethodVariables {
+	chargeAt: Date;
+	nextFormatted: string;
+	regularFormatted: string;
+	tax: YesNo;
+	differs: YesNo;
+	cancelByFormatted: string;
+}
+
+interface CardExpiringVariables extends SellerVariables {
+	branded: YesNo;
+	brand: string;
+	last4: string;
+	expiryFormatted: string;
+	chargeAt: Date;
+	amountFormatted: string;
+	tax: YesNo;
+}
+
+interface CancellationVariables extends SellerVariables {
+	receivedFormatted: string;
+	endsAt: Date;
+	reference: string;
+}
+
 export type ReportReceivedTargetKind = 'message' | 'user' | 'guild';
 
 export type ReporterOutcome = 'removed' | 'restricted' | 'action_taken' | 'no_violation';
+
+export type ReportReferenceTarget = 'message_community' | 'message_dm' | 'message' | 'user' | 'community' | 'other';
+
+export interface ReportReference {
+	target: ReportReferenceTarget;
+	reportedAt: Date;
+	username: string;
+	communityName: string;
+	channelName: string;
+}
 
 export type EnforcementNoticeKindLabel =
 	| 'warning'
@@ -17,6 +74,7 @@ export type EnforcementNoticeKindLabel =
 
 export interface EmailTemplateVariables {
 	account_deletion_cancelled: Record<string, never>;
+	account_deletion_completed: Record<string, never>;
 	account_deletion_scheduled_inactivity: {
 		deletion_date: string;
 	};
@@ -30,11 +88,34 @@ export interface EmailTemplateVariables {
 	donation_confirmation: {
 		amount: string;
 		interval: string;
+		paidAt: Date;
+		documentNumber: string;
 	};
 	donation_magic_link: {
 		minutes: number;
 	};
-	dsa_report_resolved: {
+	donation_cancellation_confirmation: CancellationVariables;
+	donation_card_expiring: CardExpiringVariables;
+	donation_payment_failed: {
+		reason: BillingPaymentProblem;
+		attemptedAt: Date;
+		amountFormatted: string;
+	};
+	donation_receipt: {
+		interval: 'month' | 'year';
+		paidAt: Date;
+		periodStart: Date;
+		periodEnd: Date;
+		amountFormatted: string;
+		document: YesNo;
+		documentNumber: string;
+	};
+	donation_renewal_notice: UpcomingChargeVariables;
+	donation_refund_receipt: {
+		refundedAt: Date;
+		amountFormatted: string;
+	};
+	dsa_report_resolved: ReportReference & {
 		outcome: ReporterOutcome;
 		appeals_email: string | null;
 	};
@@ -52,7 +133,10 @@ export interface EmailTemplateVariables {
 	email_verification_code: {
 		minutes: number;
 	};
-	gift_chargeback_notification: Record<string, never>;
+	gift_chargeback_notification: {
+		premiumName: string;
+		plan: BillingRecurringPlanName;
+	};
 	enforcement_ended: {
 		outcome: 'lifted' | 'reversed';
 		decision_id: string | null;
@@ -91,44 +175,61 @@ export interface EmailTemplateVariables {
 	operator_pass_offer_accepted: {
 		recipientName: string;
 		remainingCount: number;
+		visionary: 'yes' | 'no';
 	};
 	operator_pass_offer_ended: {
 		otherName: string;
-		ended: 'withdrawn' | 'declined' | 'cancelled';
+		ended: 'withdrawn' | 'declined' | 'cancelled' | 'unavailable';
 	};
 	operator_pass_offer_received: {
 		senderName: string;
-		arrivesAt: string;
 	};
 	operator_pass_perks_removed: {
 		scope: 'permanent' | 'temporary';
 		until: Date;
 		automated: 'yes' | 'no';
+		visionary: 'yes' | 'no';
+		cause: 'dispute' | 'other';
+		disputeId: string;
+		deadline: Date;
 	};
 	operator_pass_purchase_confirmation: {
 		termsVersion: string;
 		orderDate: Date;
 		quantity: number;
 		priceFormatted: string;
+		taxFormatted: string;
+		business: YesNo;
+		document: YesNo;
+		documentNumber: string;
 		withdrawalEndsOn: string;
-		waiverConsentAt: Date;
-		consentText: string;
+		consentAt: Date;
+		labs_name: string;
 		wallName: string;
 		wallOptOut: 'yes' | 'no';
+		sellerAddress: string;
+		sellerPhone: string;
 		sellerEmail: string;
+	};
+	operator_pass_refund_receipt: {
+		orderDate: Date;
+		refundedAt: Date;
+		amountFormatted: string;
+		delivered: YesNo;
+		passCount: number;
+		lastPass: YesNo;
+		visionary: YesNo;
 	};
 	operator_pass_removal_notice: {
 		replyDays: number;
+		visionary: 'yes' | 'no';
 	};
 	operator_pass_revoked: {
-		cause: 'refund' | 'dispute' | 'withdrawal';
+		cause: 'refund' | 'dispute' | 'withdrawal' | 'visionary';
 		lastPass: 'yes' | 'no';
+		visionary: 'yes' | 'no';
 	};
-	operator_pass_sale_open: {
-		priceFormatted: string;
-		priceEndsOn: string;
-	};
-	operator_pass_waitlist_verification: Record<string, never>;
+	operator_pass_purchase_refused: Record<string, never>;
 	operator_pass_wall_hidden: {
 		reason: 'guidelines' | 'impersonation' | 'rights' | 'age_suitability';
 	};
@@ -137,19 +238,32 @@ export interface EmailTemplateVariables {
 		shown: 'previous' | 'username' | 'operator';
 		reason: 'guidelines' | 'impersonation' | 'rights' | 'age_suitability';
 	};
+	operator_pass_wall_quote_cleared: {
+		reason: 'guidelines' | 'impersonation' | 'rights' | 'age_suitability';
+	};
+	operator_pass_visionary_turned_on: {
+		badge: YesNo;
+		wallName: string;
+		wallOptOut: YesNo;
+		member: YesNo;
+		termsVersion: string;
+	};
 	operator_pass_welcome: {
 		founderName: string;
 		deliveredAt: Date;
 		wallName: string;
 		wallOptOut: 'yes' | 'no';
+		labs: 'visionary' | 'member' | 'none';
 	};
 	operator_pass_withdrawal_receipt: {
-		cancellation: 'yes' | 'no';
 		receivedAt: Date;
 		orderDate: Date;
 		amountFormatted: string;
+		delivered: 'yes' | 'no';
+		passCount: number;
 		lastPass: 'yes' | 'no';
-		refundViaDispute: 'yes' | 'no';
+		visionary: 'yes' | 'no';
+		refund: 'started' | 'dispute' | 'already';
 	};
 	password_change_verification: {
 		minutes: number;
@@ -162,6 +276,85 @@ export interface EmailTemplateVariables {
 		orderDate: Date;
 		warningDate: Date;
 	};
+	plutonium_cancellation_confirmation: CancellationVariables & {
+		premiumName: string;
+		plan: BillingRecurringPlanName;
+		unpaid: YesNo;
+		unpaidFormatted: string;
+	};
+	plutonium_card_expiring: CardExpiringVariables & {
+		premiumName: string;
+	};
+	plutonium_ended_unpaid: SellerVariables & {
+		premiumName: string;
+		owed: 'none' | 'stopped' | 'open' | 'unknown';
+		amountFormatted: string;
+	};
+	plutonium_gift_applied: SellerVariables &
+		PaymentMethodVariables & {
+			premiumName: string;
+			plan: BillingRecurringPlanName;
+			trialEnd: Date;
+			amountFormatted: string;
+			tax: YesNo;
+		};
+	plutonium_payment_failed: {
+		premiumName: string;
+		reason: BillingPaymentProblem;
+		attemptedAt: Date;
+		amountFormatted: string;
+		access: YesNo;
+		accessEndsAt: Date;
+	};
+	plutonium_payment_receipt: {
+		premiumName: string;
+		plan: PlutoniumPlan;
+		gift: YesNo;
+		paidAt: Date;
+		periodStart: Date;
+		periodEnd: Date;
+		amountFormatted: string;
+		taxFormatted: string;
+		business: YesNo;
+		document: YesNo;
+		documentNumber: string;
+		renewal: 'month' | 'year' | 'none';
+		renewalFormatted: string;
+		renewalTax: 'included' | 'added' | 'none';
+		consentAt: Date;
+		withdrawalEndsAt: Date | string;
+		invoiceNumber: string;
+		sellerAddress: string;
+		sellerEmail: string;
+	};
+	plutonium_refund_receipt: {
+		premiumName: string;
+		plan: PlutoniumPlan;
+		refundedAt: Date;
+		amountFormatted: string;
+		paidFormatted: string;
+		paidAt: Date;
+		partial: YesNo;
+		requestedFormatted: string;
+		reference: string;
+	};
+	plutonium_withdrawal_receipt: {
+		premiumName: string;
+		receivedAt: Date;
+		purchasedAt: Date;
+		gift: YesNo;
+		amountFormatted: string;
+		refund: 'started' | 'manual';
+		brazil: YesNo;
+	};
+	plutonium_renewal_notice: UpcomingChargeVariables & {
+		premiumName: string;
+		gift: YesNo;
+		annual: YesNo;
+		plan: BillingRecurringPlanName;
+		giftEndsAt: Date;
+		yearStartsAt: Date;
+	};
 	reauth_code: {
 		minutes: number;
 	};
@@ -170,7 +363,7 @@ export interface EmailTemplateVariables {
 	report_received: {
 		targetKind: ReportReceivedTargetKind;
 	};
-	report_resolved: {
+	report_resolved: ReportReference & {
 		outcome: ReporterOutcome;
 		appeals_email: string | null;
 	};

@@ -21,8 +21,69 @@ const ImageSetEnv = "REXCTL_IMAGE_SET"
 var imageSetJSON []byte
 
 type ImageSet struct {
-	Release string            `json:"release"`
-	Images  map[string]string `json:"images"`
+	Release   string                         `json:"release"`
+	Images    map[string]string              `json:"images"`
+	Builds    map[string]string              `json:"builds,omitempty"`
+	Tags      map[string]string              `json:"tags,omitempty"`
+	Layers    map[string]Layer               `json:"layers,omitempty"`
+	Platforms map[string]map[string][]string `json:"platforms,omitempty"`
+}
+
+type Layer struct {
+	DiffID     string `json:"diff_id"`
+	Compressed uint64 `json:"compressed"`
+	Unpacked   uint64 `json:"unpacked"`
+}
+
+func (s ImageSet) LayersFor(platform, ref string) ([]Layer, bool) {
+	refs := s.Platforms[platform]
+	digests, ok := refs[ref]
+	if _, digest, pinned := strings.Cut(ref, "@"); !ok && pinned {
+		for k, v := range refs {
+			if strings.HasSuffix(k, "@"+digest) {
+				digests, ok = v, true
+				break
+			}
+		}
+	}
+	if !ok || len(digests) == 0 {
+		return nil, false
+	}
+	out := make([]Layer, 0, len(digests))
+	for _, d := range digests {
+		l, ok := s.Layers[d]
+		if !ok {
+			return nil, false
+		}
+		out = append(out, l)
+	}
+	return out, true
+}
+
+const ImageGuess = 1 << 30
+
+func (s ImageSet) Need(platform string, refs []string, local map[string]bool) uint64 {
+	var need uint64
+	seen := map[string]bool{}
+	guessed := map[string]bool{}
+	for _, ref := range refs {
+		layers, ok := s.LayersFor(platform, ref)
+		if !ok {
+			if !guessed[ref] {
+				guessed[ref] = true
+				need += ImageGuess
+			}
+			continue
+		}
+		for _, l := range layers {
+			if local[l.DiffID] || seen[l.DiffID] {
+				continue
+			}
+			seen[l.DiffID] = true
+			need += l.Unpacked + l.Compressed
+		}
+	}
+	return need
 }
 
 func EmbeddedImages() (ImageSet, error) {
@@ -79,6 +140,18 @@ func imageLines(compose []byte) ([]imageLine, error) {
 	return out, nil
 }
 
+func ComposeImages(compose []byte) map[string]string {
+	found, err := imageLines(compose)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(found))
+	for _, img := range found {
+		out[img.service] = img.value
+	}
+	return out
+}
+
 func mappingValue(n *yaml.Node, key string) *yaml.Node {
 	if n == nil || n.Kind != yaml.MappingNode {
 		return nil
@@ -125,6 +198,44 @@ func pinImages(compose []byte, release string, images map[string]string) ([]byte
 		lines[i] = lines[i][:img.column-1] + value
 	}
 	return []byte(strings.Join(lines, "\n")), nil
+}
+
+func UnpinImages(compose []byte) []byte {
+	shipped, err := ReadFile(Embedded(), ComposeFile)
+	if err != nil {
+		return compose
+	}
+	templates, err := imageLines(shipped)
+	if err != nil {
+		return compose
+	}
+	var prefix, suffix string
+	for _, t := range templates {
+		head, tag, ok := strings.Cut(t.value, ":${")
+		if slash := strings.LastIndex(head, "/"); ok && slash >= 0 && strings.HasPrefix(t.value, "${FLUXER_REGISTRY") {
+			prefix, suffix = head[:slash+1], ":${"+tag
+			break
+		}
+	}
+	found, err := imageLines(compose)
+	if err != nil || prefix == "" {
+		return compose
+	}
+	lines := strings.Split(string(compose), "\n")
+	for _, img := range found {
+		repo, digest, pinned := strings.Cut(img.value, "@sha256:")
+		i := img.line - 1
+		if !pinned || len(digest) != 64 || i < 0 || i >= len(lines) || img.column-1 > len(lines[i]) {
+			continue
+		}
+		lines[i] = lines[i][:img.column-1] + prefix + path.Base(repo) + suffix
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+func ImageDefault(value string) (string, bool) {
+	_, def, ok := defaultedVar(value)
+	return def, ok
 }
 
 func defaultedVar(value string) (name, def string, ok bool) {

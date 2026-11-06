@@ -32,7 +32,6 @@ pub mod user_flag_bits {
     pub const ACCOUNT_LIMITED: u64 = 1 << 50;
     pub const HAS_DISMISSED_PREMIUM_ONBOARDING: u64 = 1 << 51;
     pub const APP_STORE_REVIEWER: u64 = 1 << 53;
-    pub const STAFF_HIDDEN: u64 = 1 << 57;
     pub const AGE_VERIFIED_ADULT: u64 = 1 << 60;
     pub const LIMIT_EXEMPT: u64 = 1 << 62;
 }
@@ -129,11 +128,6 @@ pub const USER_FLAGS: &[U64Flag] = &[
         help: "For accounts used by app store reviewers. Skips new IP checks and blocks direct messages from strangers.",
     },
     U64Flag {
-        name: "STAFF_HIDDEN",
-        value: user_flag_bits::STAFF_HIDDEN,
-        help: "Hides the staff badge while keeping the staff flag.",
-    },
-    U64Flag {
         name: "AGE_VERIFIED_ADULT",
         value: user_flag_bits::AGE_VERIFIED_ADULT,
         help: "Set by the age verification of the official instance. Self-hosted instances do not run it.",
@@ -150,6 +144,8 @@ const RESTRICTION_USER_FLAGS: u64 = user_flag_bits::DISABLED
     | user_flag_bits::SPAMMER
     | user_flag_bits::REPORT_BANNED;
 const PURCHASE_DISABLED: i32 = 1 << 6;
+pub const PREMIUM_ENABLED_OVERRIDE: i32 = 1 << 7;
+const OPERATORS_CHANNEL_HIDDEN: i32 = 1 << 13;
 
 pub fn user_flag_is_editable(flag: u64, current_flags: u64, suspended: bool) -> bool {
     let self_disabled = flag == user_flag_bits::DISABLED && current_flags & flag != 0 && !suspended;
@@ -157,7 +153,7 @@ pub fn user_flag_is_editable(flag: u64, current_flags: u64, suspended: bool) -> 
 }
 
 pub fn premium_flag_is_editable(flag: i32) -> bool {
-    flag & PURCHASE_DISABLED == 0
+    flag & (PURCHASE_DISABLED | OPERATORS_CHANNEL_HIDDEN) == 0
 }
 
 pub const PREMIUM_FLAGS: &[I32Flag] = &[
@@ -166,20 +162,12 @@ pub const PREMIUM_FLAGS: &[I32Flag] = &[
         value: 1 << 0,
     },
     I32Flag {
-        name: "BADGE_HIDDEN",
-        value: 1 << 1,
-    },
-    I32Flag {
         name: "BADGE_MASKED",
         value: 1 << 2,
     },
     I32Flag {
         name: "BADGE_TIMESTAMP_HIDDEN",
         value: 1 << 3,
-    },
-    I32Flag {
-        name: "BADGE_SEQUENCE_HIDDEN",
-        value: 1 << 4,
     },
     I32Flag {
         name: "PERKS_SANITIZED",
@@ -191,15 +179,11 @@ pub const PREMIUM_FLAGS: &[I32Flag] = &[
     },
     I32Flag {
         name: "ENABLED_OVERRIDE",
-        value: 1 << 7,
+        value: PREMIUM_ENABLED_OVERRIDE,
     },
     I32Flag {
         name: "PERKS_DISABLED",
         value: 1 << 8,
-    },
-    I32Flag {
-        name: "OPERATOR_PASS_BADGE_HIDDEN",
-        value: 1 << 9,
     },
     I32Flag {
         name: "OPERATOR_PASS_BADGE_TIMESTAMP_HIDDEN",
@@ -208,6 +192,10 @@ pub const PREMIUM_FLAGS: &[I32Flag] = &[
     I32Flag {
         name: "OPERATOR_PASS_BADGE_COUNT_HIDDEN",
         value: 1 << 12,
+    },
+    I32Flag {
+        name: "OPERATORS_CHANNEL_HIDDEN",
+        value: OPERATORS_CHANNEL_HIDDEN,
     },
 ];
 

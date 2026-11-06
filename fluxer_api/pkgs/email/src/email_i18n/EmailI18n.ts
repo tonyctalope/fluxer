@@ -14,13 +14,33 @@ const DEFAULT_LOCALE = 'en-US';
 const DOUBLED_PERIOD = /(?<!\.)\.\.(?!\.)/g;
 
 const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/;
-const INERT_VARIABLES = new Set(['otherName', 'recipientName', 'senderName', 'statement', 'username', 'wallName']);
+const INERT_VARIABLES = new Set([
+	'channelName',
+	'communityName',
+	'otherName',
+	'premiumName',
+	'recipientName',
+	'senderName',
+	'statement',
+	'username',
+	'wallName',
+]);
 const ISOLATED_VARIABLES = new Set([
 	'amount',
+	'channelName',
+	'communityName',
 	'amountFormatted',
+	'cancelByFormatted',
+	'expiryFormatted',
+	'nextFormatted',
 	'priceFormatted',
+	'receivedFormatted',
+	'regularFormatted',
+	'requestedFormatted',
+	'unpaidFormatted',
 	'founderName',
 	'otherName',
+	'premiumName',
 	'recipientName',
 	'senderName',
 	'username',
@@ -34,7 +54,7 @@ function isolateForLocale(value: string, locale: string): string {
 	return getEmailTextDirection(locale) === 'rtl' ? isolateEmailValue(value) : value;
 }
 
-function resolveEmailTimeZone(timeZone: string | null | undefined): string | null {
+export function resolveEmailTimeZone(timeZone: string | null | undefined): string | null {
 	if (!timeZone) return null;
 	try {
 		new Intl.DateTimeFormat('en-US', {timeZone});

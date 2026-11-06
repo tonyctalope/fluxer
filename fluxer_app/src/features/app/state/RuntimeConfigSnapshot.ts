@@ -14,7 +14,9 @@ import {
 	AccountIdentityModes,
 	TagStyles,
 } from '@fluxer/constants/src/AccountIdentityConstants';
+import {BUILT_IN_GUILD_BADGE_KINDS} from '@fluxer/constants/src/BadgeConstants';
 import {LIMIT_KEYS, type LimitKey} from '@fluxer/constants/src/LimitConfigMetadata';
+import {NO_BUILT_IN_GUILD_BADGE_IMAGES} from '@fluxer/instance_bootstrap/src/ClientRuntimeDiscovery';
 import {
 	ACCOUNT_DELETION_GRACE_PERIOD_HOURS_MAX,
 	ACCOUNT_DELETION_GRACE_PERIOD_HOURS_MIN,
@@ -24,15 +26,18 @@ import {
 } from '@fluxer/instance_bootstrap/src/Discovery';
 import {InstanceEndpointKind, normalizeInstanceEndpoint} from '@fluxer/instance_bootstrap/src/EndpointNormalization';
 import {CanonicalNetworkProtocol} from '@fluxer/instance_bootstrap/src/NetworkOrigin';
-import {normalizeThemeColor} from '@fluxer/instance_bootstrap/src/ThemeColor';
+import {normalizeHexColor, normalizeThemeColor} from '@fluxer/instance_bootstrap/src/ThemeColor';
 import {
 	AGE_POLICY_ACTIONS,
 	type InstanceAgePolicy,
 	type InstanceAgePolicyGeo,
 	type InstanceAppPublic,
+	type InstanceBuiltInGuildBadgeImages,
 	type InstanceCommunity,
 	type InstanceDomainMigration,
 	type InstanceFeatures,
+	type InstanceGuildBadge,
+	type InstanceHiddenBuiltInGuildBadges,
 	type InstanceNotice,
 	type InstanceRegistration,
 	type InstanceServices,
@@ -74,6 +79,12 @@ export interface RuntimeConfigSnapshot extends RuntimeConfigIdentity {
 	readonly agePolicy: InstanceAgePolicy | null;
 	readonly domainMigration: InstanceDomainMigration | null;
 	readonly notice: InstanceNotice | null;
+	readonly guildBadges: ReadonlyArray<InstanceGuildBadge>;
+	readonly guildBadgesPartial: boolean;
+	readonly customBadgesVersion: string | null;
+	readonly builtInGuildBadgeImages: InstanceBuiltInGuildBadgeImages;
+	readonly hiddenBuiltInGuildBadges: InstanceHiddenBuiltInGuildBadges;
+	readonly hiddenRoleIds: ReadonlyArray<string>;
 }
 
 export class InvalidRuntimeConfigSnapshotError extends Error {
@@ -329,6 +340,8 @@ function readSso(value: unknown): InstanceSso | null {
 	const sso: InstanceSso = {
 		enabled: readBoolean(source, 'enabled', 'sso.enabled'),
 		enforced: readBoolean(source, 'enforced', 'sso.enforced'),
+		username_from_provider:
+			readOptionalBoolean(source, 'username_from_provider', 'sso.username_from_provider') ?? false,
 		display_name: readNullableNonEmptyString(source, 'display_name', 'sso.display_name'),
 		button_label: readOptionalText(source, 'button_label'),
 		redirect_uri: readEndpoint(source, 'redirect_uri', 'sso.redirect_uri', InstanceEndpointKind.SERVICE),
@@ -363,6 +376,8 @@ function readCommunity(value: unknown): InstanceCommunity {
 		),
 		direct_messages_disabled: readBoolean(source, 'direct_messages_disabled', 'community.direct_messages_disabled'),
 		guild_create_access: readOptionalBoolean(source, 'guild_create_access', 'community.guild_create_access') ?? true,
+		personal_notes_enabled:
+			readOptionalBoolean(source, 'personal_notes_enabled', 'community.personal_notes_enabled') ?? true,
 	};
 	const friendsDisabled = readOptionalBoolean(source, 'friends_disabled', 'community.friends_disabled');
 	if (friendsDisabled !== undefined) {
@@ -474,6 +489,8 @@ function readAppPublic(value: unknown): InstanceAppPublic {
 				: null,
 			theme_color: normalizeThemeColor(branding.theme_color),
 			status_page_url: readOptionalText(branding, 'status_page_url'),
+			status_page_instatus:
+				readOptionalBoolean(branding, 'status_page_instatus', 'appPublic.branding.status_page_instatus') ?? false,
 			status_page_incident_history_url: readOptionalText(branding, 'status_page_incident_history_url'),
 			premium_product_name: readOptionalText(branding, 'premium_product_name') ?? DEFAULT_PREMIUM_PRODUCT_NAME,
 			premium_info_url: Object.hasOwn(branding, 'premium_info_url')
@@ -482,8 +499,40 @@ function readAppPublic(value: unknown): InstanceAppPublic {
 			sign_in_backdrop_url: Object.hasOwn(branding, 'sign_in_backdrop_url')
 				? readNullableAbsoluteHttpUrl(branding, 'sign_in_backdrop_url', 'appPublic.branding.sign_in_backdrop_url')
 				: null,
+			premium_page_color: normalizeHexColor(branding.premium_page_color),
+			premium_showcase_expressions_url: Object.hasOwn(branding, 'premium_showcase_expressions_url')
+				? readNullableAbsoluteHttpUrl(
+						branding,
+						'premium_showcase_expressions_url',
+						'appPublic.branding.premium_showcase_expressions_url',
+					)
+				: null,
+			premium_showcase_profile_url: Object.hasOwn(branding, 'premium_showcase_profile_url')
+				? readNullableAbsoluteHttpUrl(
+						branding,
+						'premium_showcase_profile_url',
+						'appPublic.branding.premium_showcase_profile_url',
+					)
+				: null,
+			premium_showcase_stream_url: Object.hasOwn(branding, 'premium_showcase_stream_url')
+				? readNullableAbsoluteHttpUrl(
+						branding,
+						'premium_showcase_stream_url',
+						'appPublic.branding.premium_showcase_stream_url',
+					)
+				: null,
+			premium_showcase_upload_url: Object.hasOwn(branding, 'premium_showcase_upload_url')
+				? readNullableAbsoluteHttpUrl(
+						branding,
+						'premium_showcase_upload_url',
+						'appPublic.branding.premium_showcase_upload_url',
+					)
+				: null,
 			custom_css: readOptionalText(branding, 'custom_css'),
 			upload_limit_message: readOptionalText(branding, 'upload_limit_message'),
+			trusted_domains: Object.hasOwn(branding, 'trusted_domains')
+				? readStringArray(branding.trusted_domains, 'appPublic.branding.trusted_domains')
+				: [],
 		},
 		setup: {
 			configured: readBoolean(setup, 'configured', 'appPublic.setup.configured'),
@@ -556,6 +605,59 @@ function readNotice(value: unknown): InstanceNotice | null {
 	};
 }
 
+function readGuildBadges(value: unknown): Array<InstanceGuildBadge> {
+	if (value === undefined) {
+		return [];
+	}
+	if (!Array.isArray(value)) {
+		invalid('guildBadges', 'must be an array');
+	}
+	return value.map((entry, index) => {
+		const path = `guildBadges[${index}]`;
+		const source = readRecord(entry, path);
+		const position =
+			source.position === undefined ? undefined : readNonEmptyString(source, 'position', `${path}.position`);
+		return {
+			id: readNonEmptyString(source, 'id', `${path}.id`),
+			name: readNonEmptyString(source, 'name', `${path}.name`),
+			description: readNullableNonEmptyString(source, 'description', `${path}.description`),
+			asset_url: readNonEmptyString(source, 'asset_url', `${path}.asset_url`),
+			href: readNullableAbsoluteHttpUrl(source, 'href', `${path}.href`),
+			...(position === undefined ? {} : {position}),
+		};
+	});
+}
+
+function readBuiltInGuildBadgeImages(value: unknown): InstanceBuiltInGuildBadgeImages {
+	if (value === undefined) {
+		return NO_BUILT_IN_GUILD_BADGE_IMAGES;
+	}
+	const source = readRecord(value, 'builtInGuildBadgeImages');
+	const read = (key: keyof InstanceBuiltInGuildBadgeImages) =>
+		source[key] === undefined ? null : readNullableNonEmptyString(source, key, `builtInGuildBadgeImages.${key}`);
+	return {verified: read('verified'), partnered: read('partnered'), discoverable: read('discoverable')};
+}
+
+function readHiddenBuiltInGuildBadges(value: unknown): InstanceHiddenBuiltInGuildBadges {
+	if (value === undefined) {
+		return [];
+	}
+	if (!Array.isArray(value)) {
+		invalid('hiddenBuiltInGuildBadges', 'must be an array');
+	}
+	return BUILT_IN_GUILD_BADGE_KINDS.filter((kind) => value.includes(kind));
+}
+
+function readHiddenRoleIds(value: unknown): ReadonlyArray<string> {
+	if (value === undefined) {
+		return [];
+	}
+	if (!Array.isArray(value) || !value.every((id) => typeof id === 'string')) {
+		invalid('hiddenRoleIds', 'must be an array of strings');
+	}
+	return [...value];
+}
+
 export function requireRuntimeConfigSnapshot(value: unknown): RuntimeConfigSnapshot {
 	const source = readRecord(value, 'root');
 	return {
@@ -585,5 +687,14 @@ export function requireRuntimeConfigSnapshot(value: unknown): RuntimeConfigSnaps
 		agePolicy: readAgePolicy(source.agePolicy),
 		domainMigration: parseInstanceDomainMigration(source.domainMigration),
 		notice: readNotice(source.notice),
+		guildBadges: readGuildBadges(source.guildBadges),
+		guildBadgesPartial: source.guildBadgesPartial === true,
+		customBadgesVersion:
+			source.customBadgesVersion === undefined || source.customBadgesVersion === null
+				? null
+				: readNonEmptyString(source, 'customBadgesVersion', 'customBadgesVersion'),
+		builtInGuildBadgeImages: readBuiltInGuildBadgeImages(source.builtInGuildBadgeImages),
+		hiddenBuiltInGuildBadges: readHiddenBuiltInGuildBadges(source.hiddenBuiltInGuildBadges),
+		hiddenRoleIds: readHiddenRoleIds(source.hiddenRoleIds),
 	};
 }

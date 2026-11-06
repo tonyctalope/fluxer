@@ -12,15 +12,19 @@ import type {UserCacheService} from '@app/api/infrastructure/UserCacheService';
 import {usesUsernameSignIn} from '@app/api/instance/AccountIdentityModeCache';
 import {Logger} from '@app/api/Logger';
 import type {RequestCache} from '@app/api/middleware/RequestCacheMiddleware';
+import {getOperatorPassWallService} from '@app/api/middleware/ServiceSingletons';
 import type {AuthSession} from '@app/api/models/AuthSession';
 import type {User} from '@app/api/models/User';
 import {
 	dispatchOperatorPassUserUpdate,
 	type OperatorPassEntitlementService,
+	type OperatorPassHolder,
 	operatorPassPrivateFields,
 	profileOperatorPassSince,
 	resolveOperatorPassHolder,
 } from '@app/api/operator_pass/OperatorPassEntitlementService';
+import type {OperatorPassLabsRoleService} from '@app/api/operator_pass/OperatorPassLabsRole';
+import {isOperatorPassWallStanding} from '@app/api/operator_pass/OperatorPassWallPresentation';
 import type {AuthTokenType, HonoEnv} from '@app/api/types/HonoEnv';
 import {assertAccountNotLimited} from '@app/api/user/AccountLimit';
 import {
@@ -31,8 +35,9 @@ import {
 	tierDenialError,
 } from '@app/api/user/AccountTier';
 import {isProfileHidden} from '@app/api/user/ProfileVisibility';
+import {resolveHiddenProfileBadges} from '@app/api/user/profile_badges/HiddenProfileBadges';
 import {applyProfileBadgeSettings} from '@app/api/user/profile_badges/PremiumBadgeMasking';
-import {buildProfileBadges} from '@app/api/user/profile_badges/ProfileBadgeBuilder';
+import {buildOwnProfileBadges, buildProfileBadges} from '@app/api/user/profile_badges/ProfileBadgeBuilder';
 import {loadProfileBadgeEnvironment} from '@app/api/user/profile_badges/ProfileBadgeEnvironment';
 import type {UserRepository} from '@app/api/user/repositories/UserRepository';
 import type {EmailChangeService} from '@app/api/user/services/EmailChangeService';
@@ -84,6 +89,7 @@ const PROFILE_CUSTOMIZATION_FIELDS: ReadonlyArray<keyof UserUpdatePayload> = [
 	'accent_color',
 	'timezone',
 	'timezone_privacy_flags',
+	'hidden_profile_badges',
 	'premium_badge_hidden',
 	'premium_badge_masked',
 	'premium_badge_timestamp_hidden',
@@ -130,6 +136,7 @@ export class UserAccountRequestService {
 		private readonly userCacheService: UserCacheService,
 		private readonly gatewayService: IGatewayService,
 		private readonly operatorPassEntitlementService: OperatorPassEntitlementService | null = null,
+		private readonly labsRoleService: OperatorPassLabsRoleService | null = null,
 	) {}
 
 	async getCurrentUserResponse(params: {
@@ -285,7 +292,15 @@ export class UserAccountRequestService {
 			}
 		}
 		if (
-			(userUpdateData.operator_pass_badge_hidden !== undefined ||
+			this.labsRoleService &&
+			(user.hiddenProfileBadges.has('visionary') !== updatedUser.hiddenProfileBadges.has('visionary') ||
+				user.hiddenProfileBadges.has('operator_pass') !== updatedUser.hiddenProfileBadges.has('operator_pass') ||
+				userUpdateData.premium_badge_masked !== undefined)
+		) {
+			await this.labsRoleService.resyncLabsRoles(updatedUser);
+		}
+		if (
+			(user.hiddenProfileBadges.has('operator_pass') !== updatedUser.hiddenProfileBadges.has('operator_pass') ||
 				userUpdateData.operator_pass_badge_timestamp_hidden !== undefined ||
 				userUpdateData.operator_pass_badge_count_hidden !== undefined) &&
 			this.operatorPassEntitlementService
@@ -340,17 +355,18 @@ export class UserAccountRequestService {
 
 	async getUserProfile(params: UserProfileParams): Promise<UserProfileFullResponse> {
 		const guildId = params.guildId ? createGuildID(params.guildId) : undefined;
+		const profileLookup = this.userAccountService.lookupService.getUserProfile({
+			userId: params.currentUserId,
+			targetId: params.targetUserId,
+			guildId,
+			withMutualFriends: params.withMutualFriends,
+			withMutualGuilds: params.withMutualGuilds,
+			requestCache: params.requestCache,
+		});
 		const [profile, operatorPassState, badgeEnvironment] = await Promise.all([
-			this.userAccountService.lookupService.getUserProfile({
-				userId: params.currentUserId,
-				targetId: params.targetUserId,
-				guildId,
-				withMutualFriends: params.withMutualFriends,
-				withMutualGuilds: params.withMutualGuilds,
-				requestCache: params.requestCache,
-			}),
+			profileLookup,
 			this.operatorPassEntitlementService?.loadState(params.targetUserId) ?? null,
-			loadProfileBadgeEnvironment(),
+			profileLookup.then((found) => loadProfileBadgeEnvironment(found.user.badgeIds)),
 		]);
 		let profileUser = profile.user;
 		let premiumType = profile.premiumType;
@@ -405,15 +421,21 @@ export class UserAccountRequestService {
 					restrictProfile,
 				})
 			: null;
-		const profileBadges = buildProfileBadges({
+		const viewerIsSelf = params.currentUserId === profileUser.id;
+		const operatorPass = profileUser.isBot || !operatorPassState ? null : resolveOperatorPassHolder(operatorPassState);
+		const badgeInput = {
 			user: profileUser,
-			operatorPass: profileUser.isBot || !operatorPassState ? null : resolveOperatorPassHolder(operatorPassState),
+			operatorPass,
+			operatorPassQuote: await this.operatorPassWallQuote(profileUser, operatorPass),
 			locale: params.requestLocale,
 			environment: badgeEnvironment,
 			restricted: restrictProfile,
-			hidden,
-			viewerIsSelf: params.currentUserId === profileUser.id,
-		});
+			profileHidden: hidden,
+		};
+		const profileBadges = buildProfileBadges(badgeInput);
+		const hiddenProfileBadgeCount = viewerIsSelf
+			? buildOwnProfileBadges(badgeInput).filter((badge) => badge.hidden).length
+			: undefined;
 		return {
 			user:
 				params.requestCache.userPartials.get(profileUser.id) ??
@@ -426,6 +448,7 @@ export class UserAccountRequestService {
 			premium_lifetime_sequence: premiumLifetimeSequence,
 			profile_badges: profileBadges,
 			operator_pass_since: operatorPassSince?.toISOString() ?? null,
+			hidden_profile_badge_count: hiddenProfileBadgeCount,
 			mutual_friends: mutualFriends,
 			mutual_guilds: profile.mutualGuilds,
 			connected_accounts: connectedAccounts,
@@ -434,33 +457,42 @@ export class UserAccountRequestService {
 		};
 	}
 
+	private async operatorPassWallQuote(user: User, holder: OperatorPassHolder | null): Promise<string | null> {
+		if (!holder || !this.operatorPassEntitlementService || !isOperatorPassWallStanding(user)) {
+			return null;
+		}
+		return getOperatorPassWallService().publication.shownQuote(user.id);
+	}
+
 	async previewProfileBadges(params: {
 		user: User;
 		settings: ProfileBadgePreviewRequest;
 		requestLocale: string;
 	}): Promise<ProfileBadgePreviewResponse> {
-		const {user} = params;
+		const {user, settings} = params;
 		const [operatorPassState, environment] = await Promise.all([
 			user.isBot ? null : (this.operatorPassEntitlementService?.loadState(user.id) ?? null),
-			loadProfileBadgeEnvironment(),
+			loadProfileBadgeEnvironment(user.badgeIds),
 		]);
 		const expired = shouldStripExpiredPremium(user);
-		return {
-			profile_badges: buildProfileBadges({
-				user: {
-					flags: user.flags,
-					premiumFlags: user.premiumFlags,
-					premiumType: expired ? null : user.premiumType,
-					premiumSince: expired ? null : user.premiumSince,
-					premiumLifetimeSequence: expired ? null : user.premiumLifetimeSequence,
-				},
-				operatorPass: operatorPassState ? resolveOperatorPassHolder(operatorPassState) : null,
-				locale: params.requestLocale,
-				environment,
-				hidden: isProfileHidden(user),
-				previewPremiumFlags: applyProfileBadgeSettings(user.premiumFlags, params.settings),
-			}),
+		const operatorPass = operatorPassState ? resolveOperatorPassHolder(operatorPassState) : null;
+		const input = {
+			user: {
+				flags: user.flags,
+				premiumFlags: applyProfileBadgeSettings(user.premiumFlags, settings),
+				premiumType: expired ? null : user.premiumType,
+				premiumSince: expired ? null : user.premiumSince,
+				premiumLifetimeSequence: expired ? null : user.premiumLifetimeSequence,
+				badgeIds: user.badgeIds,
+				hiddenProfileBadges: resolveHiddenProfileBadges(user.hiddenProfileBadges, settings) ?? user.hiddenProfileBadges,
+			},
+			operatorPass,
+			operatorPassQuote: await this.operatorPassWallQuote(user, operatorPass),
+			locale: params.requestLocale,
+			environment,
+			profileHidden: isProfileHidden(user),
 		};
+		return {profile_badges: buildProfileBadges(input), own_badges: buildOwnProfileBadges(input)};
 	}
 
 	checkTagAvailability(params: {currentUser: User; username: string; discriminator: number}): boolean {
@@ -505,6 +537,7 @@ export class UserAccountRequestService {
 		response.premium_will_cancel = false;
 		response.premium_billing_cycle = null;
 		response.premium_lifetime_sequence = null;
+		response.hidden_profile_badges = [];
 		response.premium_badge_hidden = false;
 		response.premium_badge_masked = false;
 		response.premium_badge_timestamp_hidden = false;

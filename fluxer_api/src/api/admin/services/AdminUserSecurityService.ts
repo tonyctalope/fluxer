@@ -16,17 +16,24 @@ import {
 	FEATURE_LIMIT_USER_FLAGS,
 	findHoldingFeatureLimit,
 } from '@app/api/enforcement/FeatureLimitState';
+import type {GuildRepository} from '@app/api/guild/repositories/GuildRepository';
 import {emitAdminAction} from '@app/api/infrastructure/activity/AccountChangeEvents';
+import type {UserCacheService} from '@app/api/infrastructure/UserCacheService';
 import {Logger} from '@app/api/Logger';
 import {requireGrantedAdminACLs} from '@app/api/middleware/AdminMiddleware';
 import {getEnforcementDecisionRepository, getInstanceConfigRepository} from '@app/api/middleware/ServiceSingletons';
+import type {AuthSession} from '@app/api/models/AuthSession';
 import {User} from '@app/api/models/User';
+import type {StoreEntitlementService} from '@app/api/store_billing/StoreEntitlementService';
+import {isPremiumTieringActive} from '@app/api/stripe/BillingConfigCache';
 import {clearNewConversationLimit} from '@app/api/user/NewConversationLimit';
+import {endPremium} from '@app/api/user/PremiumEnd';
 import {PASSWORD_RESET_TOKEN_TTL_SECONDS} from '@app/api/user/repositories/auth/TokenRepository';
 import {
 	type PartialUserChangePropagationDeps,
 	propagateUserUpdate,
 } from '@app/api/user/services/PartialUserChangePropagation';
+import {clearPerksSanitizedFlag, createPremiumClearPatch} from '@app/api/user/UserHelpers';
 import {mapWebAuthnCredentialToResponse} from '@app/api/user/UserMappers';
 import {resolveAssignedTraits} from '@app/api/user/UserTraits';
 import {getIpAddressReverse, getLocationLabelFromIp} from '@app/api/utils/IpUtils';
@@ -35,7 +42,7 @@ import {resolveSessionClientInfo} from '@app/api/utils/SessionClientIdentity';
 import {AdminACLs} from '@fluxer/constants/src/AdminACLs';
 import {APIErrorCodes} from '@fluxer/constants/src/ApiErrorCodes';
 import type {EnforcementLimit} from '@fluxer/constants/src/EnforcementReasons';
-import {PremiumFlags, UserFlags} from '@fluxer/constants/src/UserConstants';
+import {PremiumFlags, UserFlags, UserPremiumTypes} from '@fluxer/constants/src/UserConstants';
 import {ValidationErrorCodes} from '@fluxer/constants/src/ValidationErrorCodes';
 import {AccessDeniedError} from '@fluxer/errors/src/domains/core/AccessDeniedError';
 import {InputValidationError} from '@fluxer/errors/src/domains/core/InputValidationError';
@@ -46,6 +53,8 @@ import type {
 	AdminPasswordResetLinkResponse,
 	DeleteWebAuthnCredentialRequest,
 	DisableMfaRequest,
+	ListAppSessionsQuery,
+	ListAppSessionsResponse,
 	ListWebAuthnCredentialsRequest,
 	ResendVerificationEmailRequest,
 	SendPasswordResetRequest,
@@ -119,10 +128,43 @@ async function assertPremiumFlagUpdateAllowed(
 	);
 }
 
+interface AdminSessionApp {
+	app_platform: string | null;
+	app_version: string | null;
+	app_release_channel: string | null;
+	app_build_number: number | null;
+	app_beta_number: number | null;
+}
+
+const EMPTY_SESSION_APP: AdminSessionApp = {
+	app_platform: null,
+	app_version: null,
+	app_release_channel: null,
+	app_build_number: null,
+	app_beta_number: null,
+};
+
+function sessionApp(session: AuthSession): AdminSessionApp {
+	return {
+		app_platform: session.appPlatform,
+		app_version: session.appVersion,
+		app_release_channel: session.appReleaseChannel,
+		app_build_number: session.appBuildNumber,
+		app_beta_number: session.appBetaNumber,
+	};
+}
+
 interface AdminUserSecurityServiceDeps {
 	apiContext: ApiContext;
 	auditService: AdminAuditService;
 	userUpdateDeps: PartialUserChangePropagationDeps;
+	guildRepository: GuildRepository;
+	userCacheService: UserCacheService;
+	storeEntitlementService: StoreEntitlementService;
+}
+
+function refusePremiumRemoval(message: string, path = 'user_id'): never {
+	throw InputValidationError.create(path, message);
 }
 
 interface FlagAuditMetadataParams {
@@ -276,6 +318,73 @@ export class AdminUserSecurityService {
 				removeFlags: data.removeFlags,
 				newFlags: newPremiumFlags,
 			}),
+		});
+		return {
+			user: await mapUserToAdminResponse(updatedUser, cacheService, acls),
+		};
+	}
+
+	async removePremium({
+		userId,
+		adminUserId,
+		auditLogReason,
+		acls,
+	}: {
+		userId: UserID;
+		adminUserId: UserID;
+		auditLogReason: string;
+		acls: ReadonlySet<string>;
+	}) {
+		const {users: userRepository, cache: cacheService, gateway: gatewayService} = this.deps.apiContext.services;
+		const {auditService, guildRepository, userCacheService, storeEntitlementService} = this.deps;
+		if (!isPremiumTieringActive()) {
+			refusePremiumRemoval(
+				'Every account on this instance has premium because the premium mode is everyone. Switch the premium mode to mirror to remove premium from one account.',
+				'premium_mode',
+			);
+		}
+		const user = await userRepository.findUniqueAssert(userId);
+		const hasOverride = (user.premiumFlags & PremiumFlags.ENABLED_OVERRIDE) !== 0;
+		if (user.isBot) {
+			refusePremiumRemoval('Bots always have premium perks, so there is no premium to remove.');
+		}
+		if ((user.premiumType ?? 0) <= 0 && !hasOverride) {
+			refusePremiumRemoval('This account has no premium to remove.');
+		}
+		if (user.premiumType === UserPremiumTypes.LIFETIME && !Config.instance.selfHosted) {
+			refusePremiumRemoval(
+				'This account has Visionary lifetime premium. Visionary is a paid purchase, so Remove premium does not end it.',
+			);
+		}
+		if (user.stripeSubscriptionId) {
+			refusePremiumRemoval(
+				'This account has a Stripe subscription. Cancel the subscription in Stripe first, then remove premium.',
+			);
+		}
+		if (await storeEntitlementService.getActiveStoreEntitlement(userId)) {
+			refusePremiumRemoval(
+				'This account has an App Store or Google Play subscription. Remove premium after the store subscription ends.',
+			);
+		}
+		const {user: updatedUser} = await endPremium(
+			user,
+			{userRepository, guildRepository, userCacheService, gatewayService},
+			{
+				...createPremiumClearPatch(),
+				premium_flags: clearPerksSanitizedFlag(user.premiumFlags) & ~PremiumFlags.ENABLED_OVERRIDE,
+			},
+		);
+		await auditService.createAuditLog({
+			adminUserId,
+			targetType: 'user',
+			targetId: BigInt(userId),
+			action: 'remove_premium',
+			auditLogReason,
+			metadata: compactAuditMetadata([
+				['previous_premium_type', String(user.premiumType ?? UserPremiumTypes.NONE)],
+				['previous_premium_until', user.effectivePremiumUntil?.toISOString() ?? ''],
+				['removed_enabled_override', String(hasOverride)],
+			]),
 		});
 		return {
 			user: await mapUserToAdminResponse(updatedUser, cacheService, acls),
@@ -567,17 +676,21 @@ export class AdminUserSecurityService {
 			clientIp: string;
 			clientUserAgent: string | null;
 			clientOs: string | null;
+			app: AdminSessionApp;
 			deletedAt: Date | null;
 		}> = [
-			...activeSessions.map((s) => ({
-				sessionIdHash: s.sessionIdHash,
-				createdAt: s.createdAt,
-				approximateLastUsedAt: s.approximateLastUsedAt,
-				clientIp: s.clientIp,
-				clientUserAgent: s.clientUserAgent,
-				clientOs: s.clientOs ?? null,
-				deletedAt: null as Date | null,
-			})),
+			...activeSessions
+				.filter((s) => !s.isExpiredSsoSession())
+				.map((s) => ({
+					sessionIdHash: s.sessionIdHash,
+					createdAt: s.createdAt,
+					approximateLastUsedAt: s.approximateLastUsedAt,
+					clientIp: s.clientIp,
+					clientUserAgent: s.clientUserAgent,
+					clientOs: s.clientOs ?? null,
+					app: sessionApp(s),
+					deletedAt: null as Date | null,
+				})),
 			...tombstones.map((t) => ({
 				sessionIdHash: t.sessionIdHash,
 				createdAt: t.createdAt,
@@ -585,6 +698,7 @@ export class AdminUserSecurityService {
 				clientIp: t.clientIp,
 				clientUserAgent: t.clientUserAgent,
 				clientOs: t.clientOs ?? null,
+				app: EMPTY_SESSION_APP,
 				deletedAt: t.deletedAt,
 			})),
 		];
@@ -621,6 +735,7 @@ export class AdminUserSecurityService {
 						client_os: clientInfo.os,
 						client_platform: clientInfo.platform,
 						client_location: null,
+						...entry.app,
 						deleted_at: entry.deletedAt?.toISOString() ?? null,
 					};
 				}),
@@ -670,9 +785,30 @@ export class AdminUserSecurityService {
 					client_os: clientInfo.os,
 					client_platform: clientInfo.platform,
 					client_location: clientLocation,
+					...entry.app,
 					deleted_at: entry.deletedAt?.toISOString() ?? null,
 				};
 			}),
+		};
+	}
+
+	async listAppSessions(query: ListAppSessionsQuery): Promise<ListAppSessionsResponse> {
+		const {sessions, nextCursor} = await this.deps.apiContext.services.users.listAuthSessionsByAppChannel({
+			platform: query.platform,
+			releaseChannel: query.release_channel,
+			after: query.after === undefined ? null : Buffer.from(query.after, 'base64url'),
+		});
+		return {
+			sessions: sessions.map((session) => ({
+				user_id: session.userId.toString(),
+				session_id_hash: session.sessionIdHash.toString('base64url'),
+				created_at: session.createdAt.toISOString(),
+				approx_last_used_at: session.approximateLastUsedAt.toISOString(),
+				app_version: session.appVersion,
+				app_build_number: session.appBuildNumber,
+				app_beta_number: session.appBetaNumber,
+			})),
+			next_cursor: nextCursor?.toString('base64url') ?? null,
 		};
 	}
 }

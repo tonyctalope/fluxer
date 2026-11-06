@@ -13,7 +13,6 @@ import (
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/checks"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/deploy"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/engine"
-	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/host"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/instance"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/release"
 	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/setup"
@@ -39,8 +38,6 @@ type statusJSON struct {
 	Services []statusService `json:"services"`
 }
 
-const statusLowDisk = 10 << 30
-
 func newStatusCmd(app *App) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "status",
@@ -58,6 +55,9 @@ func runStatus(ctx context.Context, app *App) error {
 	inst, err := app.Instance()
 	if err != nil {
 		return err
+	}
+	if inst.State.IsVoice() {
+		return listVoiceMachine(ctx, app, inst)
 	}
 	out := statusJSON{
 		URL:      inst.Origin(),
@@ -172,8 +172,16 @@ func runStatus(ctx context.Context, app *App) error {
 			app.UI.Warn("Setup isn't finished yet.", fix)
 		}
 	}
-	if free, err := host.FreeDisk(inst.Dir); err == nil && free < statusLowDisk {
-		app.UI.Warn(fmt.Sprintf("This machine has only %s of free disk space left.", diskGB(free)), "Free up space on this machine before you upgrade.")
+	if e != nil {
+		if c, ok := checks.Get("disk"); ok {
+			if r := checks.RunIn(ctx, checkEnv(ctx, inst, e, p), checks.Installed, c); r.Status == checks.Warn || r.Status == checks.Fail {
+				app.UI.Warn(r.Message, r.Fix)
+			}
+		}
+	}
+	warnUnusedRootFiles(ctx, app, inst)
+	if len(instance.UnseenEdits(inst)) > 0 {
+		app.UI.Warn(fmt.Sprintf("rexctl put back its own version of files you changed. Your copies are in %s.", inst.Path(instance.StateDirName, instance.EditedDir)), "Run rexctl doctor to see them.")
 	}
 	for _, s := range out.Services {
 		health := s.Health
@@ -202,6 +210,11 @@ func withMissing(expected []string, containers []engine.Container) []engine.Cont
 	return containers
 }
 
-func diskGB(b uint64) string {
-	return fmt.Sprintf("%d GB", (b+(1<<29))>>30)
+func warnUnusedRootFiles(ctx context.Context, app *App, inst *instance.Instance) {
+	if app.Flags.JSON {
+		return
+	}
+	for _, name := range inst.UnusedRootFiles(ctx) {
+		app.UI.Warn(fmt.Sprintf("Fluxer no longer uses %s, which you changed after rexctl moved its files. Put your Caddy directives in a .caddy file in %s/ instead.", inst.Path(name), instance.CaddyDropInDir), "")
+	}
 }

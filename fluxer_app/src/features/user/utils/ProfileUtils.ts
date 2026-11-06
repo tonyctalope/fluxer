@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
+import * as ImageCacheUtils from '@app/features/messaging/utils/ImageCacheUtils';
 import {Profile} from '@app/features/user/models/Profile';
 import type {User} from '@app/features/user/models/User';
 import {ProfileFieldPrivacyFlags} from '@fluxer/constants/src/UserConstants';
@@ -49,4 +51,21 @@ export function createMockProfile(
 		timezone_offset: timezoneOffset,
 		profile_badges: options?.profileBadges ?? [],
 	});
+}
+
+export function customBadgeImageUrl(assetUrl: string): string {
+	return `${assetUrl}?size=96`;
+}
+
+export function profileBadgeImageUrl(badge: Pick<ProfileBadgeResponse, 'asset' | 'asset_url'>): string | null {
+	if (badge.asset !== null) return `${RuntimeConfig.staticCdnEndpoint}/badges/${badge.asset}.webp`;
+	if (badge.asset_url) return customBadgeImageUrl(badge.asset_url);
+	return null;
+}
+
+export function warmProfileBadgeImages(badges: ReadonlyArray<ProfileBadgeResponse>): void {
+	for (const badge of badges) {
+		const url = profileBadgeImageUrl(badge);
+		if (url) ImageCacheUtils.warmImage(url);
+	}
 }

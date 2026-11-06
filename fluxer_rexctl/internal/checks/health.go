@@ -3,6 +3,7 @@
 package checks
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"net"
@@ -10,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/fluxerapp/fluxer/fluxer_rexctl/internal/settings"
 )
 
 func init() {
@@ -22,6 +25,10 @@ func (e *Env) localAddr(key, def string) string {
 		v = def
 	}
 	return localHostPort(v)
+}
+
+func (e *Env) edgeAddr(key, def string) string {
+	return settings.EdgeDialAddr(e.value(settings.EdgeListenVar), cmp.Or(e.value(key), def))
 }
 
 func localHostPort(v string) string {
@@ -43,12 +50,20 @@ func (e *Env) healthURLs() []string {
 		return []string{"http://" + e.localAddr("FLUXER_HTTP_PORT", "127.0.0.1:80") + "/_health"}
 	}
 	if strings.EqualFold(e.value("FLUXER_PUBLIC_SCHEME"), "http") {
-		return []string{"http://" + e.localAddr("FLUXER_HTTP_PORT", "80") + "/_health"}
+		return []string{"http://" + e.edgeAddr("FLUXER_HTTP_PORT", "80") + "/_health"}
 	}
 	return []string{
-		"https://" + e.localAddr("FLUXER_HTTPS_PORT", "443") + "/_health",
-		"http://" + e.localAddr("FLUXER_HTTP_PORT", "80") + "/_health",
+		"https://" + e.edgeAddr("FLUXER_HTTPS_PORT", "443") + "/_health",
+		"http://" + e.edgeAddr("FLUXER_HTTP_PORT", "80") + "/_health",
 	}
+}
+
+func (e *Env) edgePublished() bool {
+	if e.Project == nil || e.Project.Model == nil {
+		return true
+	}
+	svc, ok := e.Project.Model.Services["edge"]
+	return !ok || len(svc.Ports) > 0
 }
 
 func (e *Env) localClient() *http.Client {
@@ -69,6 +84,12 @@ func runHealth(ctx context.Context, e *Env) Result {
 	states, err := e.serviceStates(ctx)
 	if err != nil || !slices.ContainsFunc(states, func(s ServiceState) bool { return s.Name == "edge" && s.Running() }) {
 		return skip("")
+	}
+	if !e.edgePublished() {
+		if !answersInsideEdge(ctx, e) {
+			return fail("Fluxer doesn't answer inside the edge container.", "Run rexctl logs edge to see why.")
+		}
+		return pass("Fluxer answers inside the edge container.")
 	}
 	client := e.localClient()
 	answered := false
@@ -97,5 +118,17 @@ func runHealth(ctx context.Context, e *Env) Result {
 	if answered {
 		return fail("Fluxer's web server answers with an error.", "Run rexctl logs api to see why.")
 	}
+	if answersInsideEdge(ctx, e) {
+		return warn("Fluxer answers inside the edge container, but not on this machine's ports 80 and 443.", "That's fine if your own reverse proxy forwards to the edge container. Run rexctl proxy on to tell rexctl about it.")
+	}
 	return fail("Fluxer doesn't answer on this machine.", "Run rexctl logs edge to see why.")
+}
+
+func answersInsideEdge(ctx context.Context, e *Env) bool {
+	probe := "http://127.0.0.1:8088/_edge"
+	if e.mode() == modeProxy {
+		probe = "http://127.0.0.1:8080/_health"
+	}
+	_, err := e.exec(ctx, "edge", "", "wget", "-q", "-O", "/dev/null", probe)
+	return err == nil
 }

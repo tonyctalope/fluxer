@@ -137,6 +137,22 @@ map_legacy_flags() {
 	[ "$help" -eq 0 ] || add --help
 }
 
+voice_join_shorthand() {
+	[ "${1:-}" = voice ] || return 1
+	case ${2:-} in
+		'' | -* | add | join | token | list | status | test | hostname | remove | help) return 1 ;;
+	esac
+	case ${3:-} in
+		fvj_*) return 0 ;;
+		'' | -*)
+			case $2 in
+				*.*) return 0 ;;
+			esac
+			;;
+	esac
+	return 1
+}
+
 self_dir=''
 case $0 in
 	*/install.sh) self_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd) || self_dir='' ;;
@@ -146,7 +162,12 @@ trial=0
 case ${1:-} in
 	'' | -*) map_legacy_flags "$@" ;;
 	*)
-		add "$@"
+		if voice_join_shorthand "$@"; then
+			shift
+			add voice join "$@"
+		else
+			add "$@"
+		fi
 		for arg in "$@"; do
 			case $arg in
 				--dry-run | --check) trial=1 ;;
@@ -239,8 +260,20 @@ printf '%s Installed rexctl %s\n' "$glyph_ok" "$version" >&2
 case ":$PATH:" in
 	*":$bin_dir:"*) ;;
 	*)
-		printf '%s rexctl is in %s, which isn'"'"'t on your PATH.\n' "$glyph_warn" "$bin_dir" >&2
-		printf '  Add it to your PATH to run rexctl from anywhere.\n' >&2
+		case $bin_dir in
+			"$HOME"/*)
+				shown="~${bin_dir#"$HOME"}"
+				path_dir="\$HOME${bin_dir#"$HOME"}"
+				;;
+			*)
+				shown=$bin_dir
+				path_dir=$bin_dir
+				;;
+		esac
+		printf '%s rexctl is in %s, which isn'"'"'t on your PATH yet.\n' "$glyph_warn" "$shown" >&2
+		printf '  Run it as %s/rexctl for now. To run rexctl by name in this terminal, run:\n' "$shown" >&2
+		printf '  export PATH="%s:%s"\n' "$path_dir" "\$PATH" >&2
+		printf '  On most Linux distributions, rexctl works by name in a new terminal.\n' >&2
 		;;
 esac
 

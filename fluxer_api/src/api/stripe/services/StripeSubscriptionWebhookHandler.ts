@@ -28,6 +28,7 @@ import {
 	getSubscriptionStartDate,
 } from '@app/api/stripe/StripeSubscriptionPeriod';
 import {extractId} from '@app/api/stripe/StripeUtils';
+import {isDonationInvoice, isDonationSubscription} from '@app/api/stripe/services/BillingInvoiceDetails';
 import type {StripePremiumService} from '@app/api/stripe/services/StripePremiumService';
 import type {StripeSubscriptionReconciler} from '@app/api/stripe/services/StripeSubscriptionReconciler';
 import {shiftGiftExtensionPastPremiumUntil} from '@app/api/user/GiftExtensionShift';
@@ -43,14 +44,6 @@ const TERMINAL_SUBSCRIPTION_STATUSES: ReadonlySet<Stripe.Subscription.Status> = 
 	'canceled',
 	'incomplete_expired',
 ]);
-
-function isDonationSubscription(subscription: Stripe.Subscription): boolean {
-	return subscription.metadata?.is_donation === 'true';
-}
-
-function isDonationInvoice(invoice: Stripe.Invoice): boolean {
-	return invoice.parent?.subscription_details?.metadata?.is_donation === 'true';
-}
 
 export class StripeSubscriptionWebhookHandler {
 	private readonly paymentRepository = new PaymentRepository();
@@ -381,6 +374,17 @@ export class StripeSubscriptionWebhookHandler {
 				'Unable to resolve user for invoice collection issue access update',
 			);
 			return;
+		}
+		if (subscriptionId && targetUser.stripeSubscriptionId !== subscriptionId) {
+			const mirrored = await this.billingRepository.subscriptions.findById(subscriptionId);
+			const status = mirrored?.status ?? (await this.reconciler.getSubscriptionSnapshotById(subscriptionId))?.status;
+			if (status && TERMINAL_SUBSCRIPTION_STATUSES.has(status as Stripe.Subscription.Status)) {
+				Logger.info(
+					{userId: targetUser.id, invoiceId: invoice.id, subscriptionId, status, reason: context.reason},
+					'Ignoring a collection issue on a subscription that has already ended',
+				);
+				return;
+			}
 		}
 		const updatedUser = await this.markSubscriptionPaymentIssue(targetUser, {
 			subscriptionId,

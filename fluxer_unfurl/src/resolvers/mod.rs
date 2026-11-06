@@ -13,6 +13,8 @@ pub mod wikipedia;
 pub mod xkcd;
 pub mod youtube;
 
+use crate::activity_pub::fetcher::ActivityPubClient;
+use crate::activity_pub::signature::RequestSigner;
 use crate::media_proxy::MediaProxyClient;
 use crate::types::{MessageEmbed, NsfwMode};
 use std::future::Future;
@@ -28,6 +30,16 @@ pub struct ResolveContext<'mp> {
     pub self_hosted: bool,
     pub youtube_api_key: Option<String>,
     pub klipy_api_key: Option<String>,
+    pub activity_pub_signer: Option<RequestSigner>,
+}
+
+impl ResolveContext<'_> {
+    pub fn activity_pub_client(&self) -> ActivityPubClient<'_> {
+        ActivityPubClient {
+            http: &self.http_client,
+            signer: self.activity_pub_signer.as_ref(),
+        }
+    }
 }
 
 pub struct ResolverResult {

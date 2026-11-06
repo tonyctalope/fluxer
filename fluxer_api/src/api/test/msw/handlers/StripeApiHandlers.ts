@@ -13,12 +13,14 @@ interface CheckoutSessionParams {
 	billing_address_collection?: string;
 	customer?: string;
 	customer_email?: string;
+	customer_update?: Record<string, string>;
 	line_items?: Array<{
 		price_data?: unknown;
 		price?: string;
 		quantity?: number;
 	}>;
 	mode?: string;
+	tax_id_collection?: Record<string, string>;
 	payment_method_types?: Array<string>;
 	payment_method_options?: {
 		card?: {
@@ -54,6 +56,7 @@ interface CheckoutSessionParams {
 interface PortalSessionParams {
 	customer: string;
 	return_url?: string;
+	configuration?: string;
 }
 
 interface StripeApiMockConfig {
@@ -289,6 +292,10 @@ interface MockStripeInvoice {
 	hosted_invoice_url: string | null;
 	invoice_pdf: string | null;
 	number: string | null;
+	lines?: {
+		object?: 'list';
+		data: Array<Record<string, unknown>>;
+	};
 	payments: {
 		object: 'list';
 		data: Array<MockStripeInvoicePayment>;
@@ -322,11 +329,19 @@ interface MockStripeSubscriptionState {
 	current_period_end: number;
 	cancel_at: number | null;
 	cancel_at_period_end: boolean;
+	ended_at: number | null;
 	default_payment_method: string | null;
 	latest_invoice: string | null;
 	status: 'active' | 'canceled' | 'incomplete' | 'past_due' | 'trialing';
 	schedule_id: string | null;
 	metadata: Record<string, string>;
+	start_date?: number;
+	billing_cycle_anchor?: number;
+	discounts?: Array<Record<string, unknown>>;
+	collection_method?: 'charge_automatically' | 'send_invoice';
+	pause_collection?: {behavior: string} | null;
+	default_source?: string | null;
+	cancellation_details?: {reason: string | null; comment?: string | null} | null;
 }
 
 interface MockStripeSubscriptionSchedule {
@@ -415,10 +430,35 @@ function parseFormDataToObject<T extends object = Record<string, unknown>>(formD
 	return result as T;
 }
 
+type StripeMockObject = {id: string} & Record<string, unknown>;
+
+interface StripeApiMockStore {
+	invoice: (invoice: StripeMockObject) => void;
+	refund: (refund: StripeMockObject) => void;
+	paymentIntent: (paymentIntent: StripeMockObject) => void;
+	charge: (charge: StripeMockObject) => void;
+	subscription: (id: string, patch: Partial<MockStripeSubscriptionState>) => void;
+	paymentMethod: (paymentMethod: StripeMockObject) => void;
+	invoicePreview: (subscriptionId: string, preview: StripeMockObject | 'error') => void;
+	checkoutSession: (session: StripeMockObject) => void;
+}
+
 export interface StripeApiHandlers {
 	handlers: Array<RequestHandler>;
 	spies: StripeApiMockSpies;
+	put: StripeApiMockStore;
 	reset: () => void;
+}
+
+function portalConfigurationObject(stored: {id: string; invoiceHistory: boolean; metadata: Record<string, string>}) {
+	return {
+		id: stored.id,
+		object: 'billing_portal.configuration',
+		active: true,
+		is_default: false,
+		metadata: stored.metadata,
+		features: {invoice_history: {enabled: stored.invoiceHistory}},
+	};
 }
 
 export function createStripeApiHandlers(config: StripeApiMockConfig = {}): StripeApiHandlers {
@@ -446,6 +486,10 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 	};
 	let sessionCounter = 0;
 	let portalCounter = 0;
+	const portalConfigurations = new Map<
+		string,
+		{id: string; invoiceHistory: boolean; metadata: Record<string, string>}
+	>();
 	let refundCounter = 0;
 	let valueListCounter = 0;
 	const subscriptionStore = new Map<string, MockStripeSubscriptionState>();
@@ -458,6 +502,8 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 	const customerStore = new Map<string, MockStripeCustomer>();
 	const valueListStore = new Map<string, MockStripeValueList>();
 	const subscriptionScheduleStore = new Map<string, MockStripeSubscriptionSchedule>();
+	const invoicePreviewStore = new Map<string, StripeMockObject | 'error'>();
+	const checkoutSessionStore = new Map<string, StripeMockObject>();
 	let subscriptionScheduleCounter = 0;
 	function createDefaultCharge(id: string, paymentIntentId: string | null = 'pi_test_1'): MockStripeCharge {
 		return {
@@ -504,6 +550,8 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 		customerStore.clear();
 		valueListStore.clear();
 		subscriptionScheduleStore.clear();
+		invoicePreviewStore.clear();
+		checkoutSessionStore.clear();
 		for (const [chargeId, overrides] of Object.entries(config.charges ?? {})) {
 			chargeStore.set(chargeId, {
 				...createDefaultCharge(chargeId),
@@ -725,6 +773,7 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 			hosted_invoice_url: `https://invoice.stripe.com/i/${id}`,
 			invoice_pdf: `https://pay.stripe.com/invoice/${id}/pdf`,
 			number: null,
+			lines: {data: []},
 			payments: {
 				object: 'list',
 				data: [createDefaultInvoicePayment(`inpay_${id}`, id, paymentIntentId, chargeId)],
@@ -795,6 +844,7 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 			current_period_end: currentPeriodStart + 30 * 24 * 60 * 60,
 			cancel_at: null,
 			cancel_at_period_end: false,
+			ended_at: null,
 			default_payment_method: 'pm_test_1',
 			latest_invoice: null,
 			status: 'active',
@@ -858,15 +908,57 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 			cancel_at: subState.cancel_at,
 			cancel_at_period_end: subState.cancel_at_period_end,
 			canceled_at: subState.status === 'canceled' ? Math.floor(Date.now() / 1000) : null,
-			collection_method: 'charge_automatically',
+			cancellation_details: subState.cancellation_details ?? null,
+			ended_at: subState.ended_at,
+			collection_method: subState.collection_method ?? 'charge_automatically',
 			created: Math.floor(Date.now() / 1000) - 90 * 24 * 60 * 60,
+			currency: subState.currency,
 			default_payment_method: subState.default_payment_method
 				? getPaymentMethod(subState.default_payment_method)
 				: null,
+			default_source: subState.default_source ?? null,
 			livemode: false,
 			metadata: {...subState.metadata},
+			pause_collection: subState.pause_collection ?? null,
 			schedule: subState.schedule_id,
-			start_date: Math.floor(Date.now() / 1000) - 90 * 24 * 60 * 60,
+			start_date: subState.start_date ?? Math.floor(Date.now() / 1000) - 90 * 24 * 60 * 60,
+			billing_cycle_anchor: subState.billing_cycle_anchor ?? subState.current_period_end,
+			discounts: subState.discounts ?? [],
+		};
+	}
+	function defaultInvoicePreview(subscriptionId: string): StripeMockObject {
+		const subState = getOrCreateSubscriptionState(subscriptionId);
+		const nowUnix = Math.floor(Date.now() / 1000);
+		const start = subState.trial_end && subState.trial_end > nowUnix ? subState.trial_end : subState.current_period_end;
+		return {
+			id: `upcoming_${subscriptionId}`,
+			object: 'invoice',
+			customer: subState.customer,
+			currency: subState.currency,
+			subtotal: subState.unit_amount,
+			total: subState.unit_amount,
+			amount_due: subState.unit_amount,
+			total_taxes: [],
+			lines: {
+				object: 'list',
+				has_more: false,
+				data: [
+					{
+						id: `il_upcoming_${subscriptionId}`,
+						object: 'line_item',
+						amount: subState.unit_amount,
+						currency: subState.currency,
+						quantity: 1,
+						period: {start, end: start + (subState.interval === 'year' ? 365 : 30) * 24 * 60 * 60},
+						pricing: {
+							type: 'price_details',
+							price_details: {price: subState.price_id, product: 'prod_test'},
+							unit_amount_decimal: String(subState.unit_amount),
+						},
+						parent: {type: 'subscription_item_details', subscription_item_details: {proration: false}},
+					},
+				],
+			},
 		};
 	}
 	function mapScheduleToStripeSchedule(schedule: MockStripeSubscriptionSchedule) {
@@ -959,6 +1051,21 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 					{status: 400},
 				);
 			}
+			const sessionFields = params as Record<string, unknown>;
+			const taxIdCollection = sessionFields.tax_id_collection as {enabled?: unknown} | undefined;
+			const customerUpdate = sessionFields.customer_update as {name?: unknown} | undefined;
+			if (sessionFields.customer && String(taxIdCollection?.enabled) === 'true' && customerUpdate?.name !== 'auto') {
+				return HttpResponse.json(
+					{
+						error: {
+							type: 'invalid_request_error',
+							message:
+								'Tax ID collection requires updating business name on the customer. To enable tax ID collection for an existing customer, please set `customer_update[name]` to `auto`.',
+						},
+					},
+					{status: 400},
+				);
+			}
 			spies.createdCheckoutSessions.push(params);
 			sessionCounter++;
 			const sessionId = `cs_test_${sessionCounter}_${Date.now()}`;
@@ -1008,8 +1115,26 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 				mode: 'subscription',
 				livemode: false,
 				created: Math.floor(Date.now() / 1000) - 3600,
+				...checkoutSessionStore.get(String(id)),
 			});
 		}),
+		http.get(`${STRIPE_API_BASE}/v1/checkout/sessions/:id/line_items`, () =>
+			HttpResponse.json({object: 'list', data: [], has_more: false, url: '/v1/checkout/sessions/line_items'}),
+		),
+		http.get(`${STRIPE_API_BASE}/v1/customers/:id/tax_ids`, () =>
+			HttpResponse.json({object: 'list', data: [], has_more: false, url: '/v1/customers/tax_ids'}),
+		),
+		http.get(`${STRIPE_API_BASE}/v1/tax_rates/:id`, ({params}) =>
+			HttpResponse.json({
+				id: params.id,
+				object: 'tax_rate',
+				percentage: 25,
+				country: 'SE',
+				jurisdiction: 'Sweden',
+				tax_type: 'vat',
+				inclusive: true,
+			}),
+		),
 		http.get(`${STRIPE_API_BASE}/v1/checkout/sessions`, ({request}) => {
 			const requestUrl = new URL(request.url);
 			const paymentIntentId = requestUrl.searchParams.get('payment_intent');
@@ -1078,11 +1203,13 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 			const requestUrl = new URL(request.url);
 			const customerId = requestUrl.searchParams.get('customer');
 			const subscriptionId = requestUrl.searchParams.get('subscription');
+			const status = requestUrl.searchParams.get('status');
 			const startingAfter = requestUrl.searchParams.get('starting_after');
 			const limit = Number.parseInt(requestUrl.searchParams.get('limit') ?? '10', 10);
 			const sortedInvoices = [...invoiceStore.values()]
 				.filter((invoice) => !customerId || invoice.customer === customerId)
 				.filter((invoice) => !subscriptionId || invoice.parent?.subscription_details?.subscription === subscriptionId)
+				.filter((invoice) => !status || invoice.status === status)
 				.sort((left, right) => right.created - left.created);
 			const startIndex = startingAfter ? sortedInvoices.findIndex((invoice) => invoice.id === startingAfter) + 1 : 0;
 			const pagedInvoices = sortedInvoices.slice(Math.max(startIndex, 0), Math.max(startIndex, 0) + limit);
@@ -1094,9 +1221,61 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 				url: '/v1/invoices',
 			});
 		}),
-		http.get(`${STRIPE_API_BASE}/v1/invoices/:id`, ({params}) => {
+		http.post(`${STRIPE_API_BASE}/v1/invoices/:id/void`, ({params}) => {
+			const invoice = getInvoice(params.id as string);
+			if (invoice.status !== 'open') {
+				return HttpResponse.json(
+					{error: {type: 'invalid_request_error', message: 'You can only void an open invoice.'}},
+					{status: 400},
+				);
+			}
+			const voided = {...invoice, status: 'void' as const};
+			invoiceStore.set(voided.id, voided);
+			return HttpResponse.json(voided);
+		}),
+		http.post(`${STRIPE_API_BASE}/v1/invoices/create_preview`, async ({request}) => {
+			const params = parseFormDataToObject<{subscription?: string}>(await request.formData());
+			const subscriptionId = params.subscription ?? 'sub_test_1';
+			const preview = invoicePreviewStore.get(subscriptionId) ?? defaultInvoicePreview(subscriptionId);
+			if (preview === 'error') {
+				return HttpResponse.json(
+					{error: {type: 'invalid_request_error', message: 'Mock preview failure', code: 'invoice_upcoming_none'}},
+					{status: 400},
+				);
+			}
+			return HttpResponse.json(preview);
+		}),
+		http.get(`${STRIPE_API_BASE}/v1/payment_methods/:id`, ({params}) => {
+			return HttpResponse.json(getPaymentMethod(params.id as string));
+		}),
+		http.get(`${STRIPE_API_BASE}/v1/invoices/:id`, ({params, request}) => {
 			const invoiceId = params.id as string;
-			return HttpResponse.json(getInvoice(invoiceId));
+			const expand = [...new URL(request.url).searchParams.entries()]
+				.filter(([key]) => key.startsWith('expand'))
+				.map(([, value]) => value);
+			const tooDeep = expand.find((path) => path.split('.').length > 4);
+			if (tooDeep) {
+				return HttpResponse.json(
+					{
+						error: {
+							type: 'invalid_request_error',
+							message: `You cannot expand more than 4 levels of a property. Property: ${tooDeep}`,
+						},
+					},
+					{status: 400},
+				);
+			}
+			const invoice = getInvoice(invoiceId);
+			if (!expand.includes('payments.data.payment.payment_intent')) {
+				return HttpResponse.json(invoice);
+			}
+			const data = invoice.payments.data.map((entry) => {
+				const paymentIntent = entry.payment.payment_intent;
+				return typeof paymentIntent === 'string'
+					? {...entry, payment: {...entry.payment, payment_intent: getPaymentIntent(paymentIntent)}}
+					: entry;
+			});
+			return HttpResponse.json({...invoice, payments: {...invoice.payments, data}});
 		}),
 		http.get(`${STRIPE_API_BASE}/v1/invoice_payments`, ({request}) => {
 			const requestUrl = new URL(request.url);
@@ -1205,6 +1384,31 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 			refundStore.set(refund.id, refund);
 			return HttpResponse.json(refund);
 		}),
+		http.get(`${STRIPE_API_BASE}/v1/refunds/:id`, ({params, request}) => {
+			const refund = refundStore.get(params.id as string);
+			if (!refund) {
+				return HttpResponse.json(
+					{error: {type: 'invalid_request_error', message: 'No such refund', code: 'resource_missing'}},
+					{status: 404},
+				);
+			}
+			const expand = [...new URL(request.url).searchParams.entries()]
+				.filter(([key]) => key.startsWith('expand'))
+				.map(([, value]) => value);
+			return HttpResponse.json({
+				...refund,
+				charge: expand.includes('charge') && refund.charge ? getCharge(refund.charge) : refund.charge,
+				payment_intent:
+					expand.includes('payment_intent') && refund.payment_intent
+						? getPaymentIntent(refund.payment_intent)
+						: refund.payment_intent,
+			});
+		}),
+		http.get('https://pay.stripe.com/invoice/:id/pdf', () =>
+			HttpResponse.arrayBuffer(new TextEncoder().encode('%PDF-1.7 test invoice').buffer, {
+				headers: {'content-type': 'application/pdf'},
+			}),
+		),
 		http.get(`${STRIPE_API_BASE}/v1/refunds`, ({request}) => {
 			const requestUrl = new URL(request.url);
 			const chargeId = requestUrl.searchParams.get('charge');
@@ -1240,7 +1444,8 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 			const formData = await request.formData();
 			const customer = formData.get('customer') as string;
 			const return_url = formData.get('return_url') as string | undefined;
-			spies.createdPortalSessions.push({customer, return_url});
+			const configuration = (formData.get('configuration') as string | null) ?? undefined;
+			spies.createdPortalSessions.push({customer, return_url, configuration});
 			portalCounter++;
 			return HttpResponse.json({
 				id: `bps_test_${portalCounter}`,
@@ -1250,8 +1455,35 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 				return_url: return_url || null,
 				livemode: false,
 				created: Math.floor(Date.now() / 1000),
-				configuration: 'bpc_test_config',
+				configuration: configuration ?? 'bpc_test_default',
 			});
+		}),
+		http.get(`${STRIPE_API_BASE}/v1/billing_portal/configurations`, () =>
+			HttpResponse.json({
+				object: 'list',
+				data: [...portalConfigurations.values()].map(portalConfigurationObject),
+				has_more: false,
+				url: '/v1/billing_portal/configurations',
+			}),
+		),
+		http.get(`${STRIPE_API_BASE}/v1/billing_portal/configurations/:id`, ({params}) => {
+			const stored = portalConfigurations.get(params.id as string);
+			return stored
+				? HttpResponse.json(portalConfigurationObject(stored))
+				: HttpResponse.json({error: {type: 'invalid_request_error', code: 'resource_missing'}}, {status: 404});
+		}),
+		http.post(`${STRIPE_API_BASE}/v1/billing_portal/configurations`, async ({request}) => {
+			const params = parseFormDataToObject<{
+				features?: {invoice_history?: {enabled?: string}};
+				metadata?: Record<string, string>;
+			}>(await request.formData());
+			const stored = {
+				id: `bpc_test_${portalConfigurations.size + 1}`,
+				invoiceHistory: params.features?.invoice_history?.enabled === 'true',
+				metadata: params.metadata ?? {},
+			};
+			portalConfigurations.set(stored.id, stored);
+			return HttpResponse.json(portalConfigurationObject(stored));
 		}),
 		http.post(`${STRIPE_API_BASE}/v1/subscription_schedules`, async ({request}) => {
 			const formData = await request.formData();
@@ -1502,11 +1734,9 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 			const subState = getOrCreateSubscriptionState(subscriptionId);
 			subState.status = 'canceled';
 			subState.cancel_at_period_end = false;
+			subState.ended_at = Math.floor(Date.now() / 1000);
 			subscriptionStore.set(subscriptionId, subState);
-			return HttpResponse.json({
-				...mapSubscriptionStateToStripeSubscription(subscriptionId, subState),
-				ended_at: Math.floor(Date.now() / 1000),
-			});
+			return HttpResponse.json(mapSubscriptionStateToStripeSubscription(subscriptionId, subState));
 		}),
 		http.get(`${STRIPE_API_BASE}/v1/subscriptions`, ({request}) => {
 			if (config.subscriptionsListEmpty) {
@@ -1518,8 +1748,20 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 				});
 			}
 			const requestUrl = new URL(request.url);
-			const customer = requestUrl.searchParams.get('customer') ?? 'cus_test_1';
 			const status = requestUrl.searchParams.get('status');
+			const periodEndBefore = requestUrl.searchParams.get('current_period_end[lte]');
+			if (periodEndBefore) {
+				return HttpResponse.json({
+					object: 'list',
+					url: '/v1/subscriptions',
+					has_more: false,
+					data: [...subscriptionStore.entries()]
+						.map(([subscriptionId, subState]) => mapSubscriptionStateToStripeSubscription(subscriptionId, subState))
+						.filter((subscription) => !status || subscription.status === status)
+						.filter((subscription) => subscription.items.data[0]!.current_period_end <= Number(periodEndBefore)),
+				});
+			}
+			const customer = requestUrl.searchParams.get('customer') ?? 'cus_test_1';
 			const storedSubscriptions = [...subscriptionStore.entries()]
 				.map(([subscriptionId, subState]) => mapSubscriptionStateToStripeSubscription(subscriptionId, subState))
 				.filter((subscription) => subscription.customer === customer)
@@ -1830,7 +2072,21 @@ export function createStripeApiHandlers(config: StripeApiMockConfig = {}): Strip
 		subscriptionScheduleCounter = 0;
 		hydrateStores();
 	}
-	return {handlers, spies, reset};
+	const put: StripeApiMockStore = {
+		invoice: (invoice) => invoiceStore.set(invoice.id, invoice as unknown as MockStripeInvoice),
+		refund: (refund) => refundStore.set(refund.id, refund as unknown as MockStripeRefund),
+		paymentIntent: (paymentIntent) =>
+			paymentIntentStore.set(paymentIntent.id, paymentIntent as unknown as MockStripePaymentIntent),
+		charge: (charge) => chargeStore.set(charge.id, {...createDefaultCharge(charge.id), ...charge} as MockStripeCharge),
+		subscription: (id, patch) => {
+			subscriptionStore.set(id, {...getOrCreateSubscriptionState(id), ...patch});
+		},
+		paymentMethod: (paymentMethod) =>
+			paymentMethodStore.set(paymentMethod.id, paymentMethod as unknown as MockStripePaymentMethod),
+		invoicePreview: (subscriptionId, preview) => invoicePreviewStore.set(subscriptionId, preview),
+		checkoutSession: (session) => checkoutSessionStore.set(String(session.id), session),
+	};
+	return {handlers, spies, put, reset};
 }
 
 export interface StripeWebhookEventData {
@@ -1838,11 +2094,40 @@ export interface StripeWebhookEventData {
 	type: string;
 	data: {
 		object: Record<string, unknown>;
+		previous_attributes?: Record<string, unknown>;
 	};
 	created?: number;
 }
 
 let mockWebhookEventCounter = 0;
+
+export function createPaymentIntentInvoicePayments(
+	invoiceId: string,
+	paymentIntentId: string,
+	paidAt: number,
+): MockStripeInvoice['payments'] {
+	return {
+		object: 'list',
+		data: [
+			{
+				id: `inpay_${invoiceId}`,
+				object: 'invoice_payment',
+				amount_paid: 2500,
+				amount_requested: 2500,
+				created: paidAt,
+				currency: 'usd',
+				invoice: invoiceId,
+				is_default: true,
+				livemode: false,
+				payment: {charge: null, payment_intent: paymentIntentId, type: 'payment_intent'},
+				status: 'paid',
+				status_transitions: {canceled_at: null, paid_at: paidAt},
+			},
+		],
+		has_more: false,
+		url: `/v1/invoices/${invoiceId}/payments`,
+	};
+}
 
 export function createMockWebhookPayload(eventData: StripeWebhookEventData): {
 	payload: string;

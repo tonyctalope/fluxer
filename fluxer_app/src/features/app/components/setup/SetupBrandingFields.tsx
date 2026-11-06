@@ -198,7 +198,7 @@ const ThemeColorSection = observer(({themeColor, disabled, onChange, targetHandl
 	const notes = useMemo(() => themeColorNotes(value), [value]);
 	const presetsRef = useRef<HTMLDivElement>(null);
 	const selectedIndex = THEME_COLOR_PRESETS.findIndex((preset) => preset.value === value);
-	const focusIndex = selectedIndex >= 0 ? selectedIndex : 0;
+	const focusIndex = Math.max(selectedIndex, 0);
 	const rtl = getLocaleDirection(i18n.locale) === 'rtl';
 	const selectPreset = (index: number) => {
 		const preset = THEME_COLOR_PRESETS[index].value;
@@ -445,7 +445,7 @@ export const BrandingFields = observer(
 			if (disabled || handledError.current === error) return;
 			handledError.current = error;
 			const failed = stepRef.current?.querySelector<HTMLElement>(
-				'[data-branding-error="not_saved"] button[data-flx^="app.self-hosted-setup-wizard-gate.asset-"]:not(:disabled)',
+				':is([data-branding-error="not_saved"], [data-branding-error="not_loaded"]) button[data-flx^="app.self-hosted-setup-wizard-gate.asset-"]:not(:disabled)',
 			);
 			if (failed) {
 				failed.focus();

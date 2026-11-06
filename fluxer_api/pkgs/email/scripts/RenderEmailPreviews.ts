@@ -3,11 +3,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {parseArgs} from 'node:util';
-import {formatMinorUnitPrice} from '@fluxer/number_utils/src/PriceFormatting';
 import type {EmailConfig, EmailMessage, IEmailProvider} from '@pkgs/email/src/EmailProviderTypes';
 import {EmailService} from '@pkgs/email/src/EmailService';
 import {EMAIL_I18N_LOCALE_MESSAGES} from '@pkgs/email/src/email_i18n/EmailI18nLocales';
 import type {EmailTemplateVariables} from '@pkgs/email/src/email_i18n/EmailI18nTypes';
+import type {BillingPaymentMethod, BillingTotals, EmailSendParams} from '@pkgs/email/src/IEmailService';
+
+const PREVIEW_WITHDRAWAL_RULES: Readonly<Record<string, 'uk' | 'brazil'>> = {'en-GB': 'uk', 'pt-BR': 'brazil'};
 
 const DEFAULT_LOCALES = ['en-US', 'sv-SE', 'de', 'ar', 'ja'];
 const PRICES: Record<string, {currency: string; earlyBird: number}> = {
@@ -18,6 +20,59 @@ const PRICES: Record<string, {currency: string; earlyBird: number}> = {
 	tr: {currency: 'TRY', earlyBird: 971000},
 };
 const USD = {currency: 'USD', earlyBird: 19900};
+const PLUTONIUM_PRICES: Record<string, {currency: string; monthly: number; tax: number | null}> = {
+	'sv-SE': {currency: 'SEK', monthly: 4900, tax: 980},
+	de: {currency: 'EUR', monthly: 499, tax: 80},
+};
+const PLUTONIUM_USD = {currency: 'USD', monthly: 499, tax: null};
+const SAMPLE_DOCUMENT_PDF = {
+	filename: 'Fluxer-OP-000123.pdf',
+	content: new Uint8Array([37, 80, 68, 70]),
+	contentType: 'application/pdf',
+};
+
+function sampleDocument(number: string) {
+	return {
+		number,
+		issuedAt: new Date('2026-10-09T14:30:00Z'),
+		pdf: {...SAMPLE_DOCUMENT_PDF, filename: `Fluxer-${number}.pdf`},
+	};
+}
+
+function plutoniumTotals(locale: string, multiplier = 1): BillingTotals {
+	const price = PLUTONIUM_PRICES[locale] ?? PLUTONIUM_USD;
+	return {
+		totalMinor: price.monthly * multiplier,
+		paidMinor: price.monthly * multiplier,
+		currency: price.currency,
+		tax: price.tax ? {amountMinor: price.tax * multiplier, behavior: 'inclusive'} : null,
+		reverseCharge: false,
+	};
+}
+
+function yearlyTotals(locale: string): BillingTotals {
+	return plutoniumTotals(locale, 10);
+}
+
+const CARD: BillingPaymentMethod = {kind: 'card', brand: 'visa', last4: '4242'};
+const PIX: BillingPaymentMethod = {kind: 'named', name: 'Pix'};
+const NO_METHOD: BillingPaymentMethod = {kind: 'none'};
+const CHARGE_AT = new Date('2026-11-12T08:00:00Z');
+const TIME_ZONE = 'Europe/Stockholm';
+const DONATION_MANAGE_URL = 'https://fluxer.com/donate/manage?email=operator%40example.com';
+const SUBSCRIPTION_ID = 'sub_1SJHDHFPC94Os7Fd';
+
+function passTotals(locale: string, quantity: number): BillingTotals {
+	const price = PRICES[locale] ?? USD;
+	const totalMinor = price.earlyBird * quantity;
+	return {
+		totalMinor,
+		paidMinor: totalMinor,
+		currency: price.currency,
+		tax: price.currency === 'USD' ? null : {amountMinor: Math.round(totalMinor / 5), behavior: 'inclusive'},
+		reverseCharge: false,
+	};
+}
 
 class CaptureEmailProvider implements IEmailProvider {
 	last: EmailMessage | null = null;
@@ -51,16 +106,17 @@ const config: EmailConfig = {
 	fromEmail: 'noreply@m.fluxer.com',
 	fromName: 'Fluxer',
 	replyTo: 'support@fluxer.com',
-	appBaseUrl: 'https://web.fluxer.app',
+	appBaseUrl: 'https://fluxer.com',
 	apiBaseUrl: 'https://api.fluxer.app',
 	appealsEmail: 'appeals@fluxer.com',
 	privacyEmail: 'privacy@fluxer.com',
 	safetyEmail: 'safety@fluxer.com',
 	supportEmail: 'support@fluxer.com',
 	productName: 'Fluxer',
-	marketingBaseUrl: 'https://fluxer.app',
+	marketingBaseUrl: 'https://fluxer.com',
 	staticCdnBaseUrl: values['static-base'],
-	legalAddress: 'Fluxer Platform AB, c/o Embassy House, Östgötagatan 12, 116 25 Stockholm, Sweden',
+	legalAddress:
+		'Fluxer Platform AB (org. no. 559537-3993, registered office Haninge, Sweden), c/o Embassy House, Östgötagatan 12, 116 25 Stockholm, Sweden',
 	brandLogo: true,
 };
 const provider = new CaptureEmailProvider();
@@ -69,9 +125,89 @@ const token = `${'0f'.repeat(16)}.${'a1'.repeat(32)}`;
 
 type Preview = (locale: string) => Promise<boolean>;
 
+function renewalNotice(
+	locale: string,
+	patch: Partial<EmailSendParams['plutonium_renewal_notice']> = {},
+): Promise<boolean> {
+	const regular = yearlyTotals(locale);
+	return service.send(
+		'plutonium_renewal_notice',
+		USER,
+		{
+			variant: 'renewal',
+			premiumName: 'Plutonium',
+			plan: 'yearly',
+			chargeAt: CHARGE_AT,
+			giftEndsAt: null,
+			yearStartsAt: null,
+			next: regular,
+			regular,
+			taxIncluded: true,
+			paymentMethod: CARD,
+			seller: true,
+			timeZone: TIME_ZONE,
+			...patch,
+		},
+		locale,
+	);
+}
+
+function cancellation(
+	locale: string,
+	patch: Partial<EmailSendParams['plutonium_cancellation_confirmation']> = {},
+): Promise<boolean> {
+	return service.send(
+		'plutonium_cancellation_confirmation',
+		USER,
+		{
+			premiumName: 'Plutonium',
+			plan: 'monthly',
+			receivedAt: DATE,
+			endsAt: CHARGE_AT,
+			reference: SUBSCRIPTION_ID,
+			unpaid: null,
+			seller: true,
+			timeZone: TIME_ZONE,
+			...patch,
+		},
+		locale,
+	);
+}
+
+function endedUnpaid(locale: string, invoiceStatus: 'void' | 'open' | 'uncollectible'): Promise<boolean> {
+	const price = PLUTONIUM_PRICES[locale] ?? PLUTONIUM_USD;
+	return service.send(
+		'plutonium_ended_unpaid',
+		USER,
+		{
+			premiumName: 'Plutonium',
+			invoiceStatus,
+			amountMinor: price.monthly,
+			currency: price.currency,
+			seller: true,
+		},
+		locale,
+	);
+}
+
 const DATE = new Date('2026-10-09T14:30:00Z');
 const USER = 'operator@example.com';
 const REPORT_ID = '1290874512349872128';
+const REPORT_REFERENCE = {
+	target: 'message_community',
+	reportedAt: new Date('2026-10-24T18:12:00Z'),
+	username: '',
+	communityName: 'Fluxer HQ',
+	channelName: 'general',
+} as const;
+const REPORT_REFERENCE_ACCOUNT = {
+	...REPORT_REFERENCE,
+	target: 'user',
+	username: 'example',
+	communityName: '',
+	channelName: '',
+} as const;
+const REPORT_REFERENCE_COMMUNITY = {...REPORT_REFERENCE, target: 'community', channelName: ''} as const;
 const DECISION_ID = '1290874512349872640';
 const SUSPENSION_NOTICE: EmailTemplateVariables['enforcement_notice'] = {
 	kind_label: 'suspension',
@@ -79,7 +215,7 @@ const SUSPENSION_NOTICE: EmailTemplateVariables['enforcement_notice'] = {
 	summary: 'We suspended your account until Oct 21, 2026, 10:00 AM UTC.',
 	effects: "You can't sign in or use Fluxer anywhere until then. Your account, messages and communities are kept.",
 	rule_title: 'Spam',
-	rule_url: 'https://fluxer.app/guidelines#6-spam-and-service-abuse',
+	rule_url: 'https://fluxer.com/guidelines#6-spam-and-service-abuse',
 	facts:
 		'We found that your account sent unwanted messages in bulk.\n2 messages in #general of Plant Club, between Oct 1, 2026, 9:00 AM UTC and Oct 2, 2026, 6:30 PM UTC.',
 	statement: 'You posted the same link in ten communities.',
@@ -96,38 +232,19 @@ function noticeDate(date: Date, locale: string): string {
 }
 
 const previews: Record<string, Preview> = {
-	waitlist_verification: (locale) =>
-		service.send(
-			'operator_pass_waitlist_verification',
-			USER,
-			{confirmUrl: `https://fluxer.app/pass/confirm?token=${token}`},
-			locale,
-		),
-	sale_open: (locale) => {
-		const price = PRICES[locale] ?? USD;
-		return service.send(
-			'operator_pass_sale_open',
-			USER,
-			{
-				checkoutUrl: 'https://web.fluxer.app/channels/@operator-pass',
-				priceFormatted: formatMinorUnitPrice(price.earlyBird, price.currency, locale),
-				priceRisesAt: new Date('2027-01-02T12:00:00Z'),
-				unsubscribeUrl: `https://api.fluxer.app/v1/operator-pass/waitlist/unsubscribe?token=${token}`,
-				unsubscribePageUrl: `https://fluxer.app/pass/unsubscribe?token=${token}`,
-			},
-			locale,
-		);
-	},
 	welcome: (locale) =>
 		service.send(
 			'operator_pass_welcome',
 			USER,
 			{
 				labsInviteUrl: 'https://fluxer.gg/fluxer-labs',
+				labsMember: true,
 				invoiceNumber: 'B1Q2W3E4-0001',
 				deliveredAt: DATE,
 				wallName: 'Maja Lind',
 				passCount: 1,
+				certificate: null,
+				visionary: false,
 			},
 			locale,
 		),
@@ -137,10 +254,13 @@ const previews: Record<string, Preview> = {
 			USER,
 			{
 				labsInviteUrl: 'https://fluxer.gg/fluxer-labs',
+				labsMember: false,
 				invoiceNumber: 'E1Q2W3E4-0002',
 				deliveredAt: DATE,
 				wallName: null,
 				passCount: 3,
+				certificate: null,
+				visionary: false,
 			},
 			locale,
 		),
@@ -172,7 +292,7 @@ const previews: Record<string, Preview> = {
 		service.send(
 			'donation_magic_link',
 			USER,
-			{manageUrl: `https://fluxer.app/donate/manage#token=${token}`, expiresAt: DATE},
+			{manageUrl: `https://fluxer.com/donate/manage#token=${token}`, expiresAt: DATE},
 			locale,
 		),
 	registration_approved: (locale) => service.send('registration_approved', USER, {}, locale),
@@ -184,7 +304,62 @@ const previews: Record<string, Preview> = {
 		service.send(
 			'donation_confirmation',
 			USER,
-			{amountCents: 1000, currency: 'eur', interval: 'month', manageUrl: 'https://fluxer.app/donate/manage'},
+			{amountCents: 1000, currency: 'eur', interval: 'month', manageUrl: 'https://fluxer.com/donate/manage'},
+			locale,
+		),
+	donation_confirmation_once: (locale) =>
+		service.send(
+			'donation_confirmation',
+			USER,
+			{
+				amountCents: 2500,
+				currency: 'eur',
+				interval: 'once',
+				manageUrl: 'https://fluxer.com/donate/manage',
+				paidAt: DATE,
+				reference: '1234-5678',
+				document: sampleDocument('DN-000042'),
+			},
+			locale,
+		),
+	donation_receipt: (locale) =>
+		service.send(
+			'donation_receipt',
+			USER,
+			{
+				interval: 'month',
+				paidAt: DATE,
+				period: {start: DATE, end: new Date('2026-11-09T14:30:00Z')},
+				totals: {totalMinor: 1000, paidMinor: 1000, currency: 'EUR', tax: null, reverseCharge: false},
+				document: sampleDocument('DN-000043'),
+				manageUrl: 'https://fluxer.com/donate/manage',
+			},
+			locale,
+		),
+	donation_refund_receipt: (locale) =>
+		service.send(
+			'donation_refund_receipt',
+			USER,
+			{
+				reference: 'DN-000043',
+				refundedAt: DATE,
+				amountMinor: 1000,
+				currency: 'EUR',
+				creditNote: sampleDocument('KG-000002'),
+			},
+			locale,
+		),
+	donation_payment_failed: (locale) =>
+		service.send(
+			'donation_payment_failed',
+			USER,
+			{
+				reason: 'declined',
+				attemptedAt: DATE,
+				amountMinor: 1000,
+				currency: 'EUR',
+				manageUrl: 'https://fluxer.com/donate/manage',
+			},
 			locale,
 		),
 	harvest_completed: (locale) =>
@@ -224,7 +399,7 @@ const previews: Record<string, Preview> = {
 				summary: 'We banned your account.',
 				effects: "You can't sign in or use Fluxer anywhere. You may not create or use other accounts.",
 				rule_title: 'Child safety',
-				rule_url: 'https://fluxer.app/guidelines#4-sexual-content-and-protection-of-minors',
+				rule_url: 'https://fluxer.com/guidelines#4-sexual-content-and-protection-of-minors',
 				facts: 'We found content or activity on your account that breaks our rules on protecting children.',
 				statement: null,
 			},
@@ -299,11 +474,17 @@ const previews: Record<string, Preview> = {
 				reportId: REPORT_ID,
 				publicComment: 'We removed the reported messages and warned the account. Thanks for the detailed report.',
 				outcome: 'removed',
+				reference: REPORT_REFERENCE,
 			},
 			locale,
 		),
 	report_resolved_restricted: (locale) =>
-		service.send('report_resolved', USER, {reportId: REPORT_ID, publicComment: '', outcome: 'restricted'}, locale),
+		service.send(
+			'report_resolved',
+			USER,
+			{reportId: REPORT_ID, publicComment: '', outcome: 'restricted', reference: REPORT_REFERENCE_ACCOUNT},
+			locale,
+		),
 	report_resolved_no_violation: (locale) =>
 		service.send(
 			'report_resolved',
@@ -312,6 +493,7 @@ const previews: Record<string, Preview> = {
 				reportId: REPORT_ID,
 				publicComment: 'The messages were sarcastic but not aimed at anyone.',
 				outcome: 'no_violation',
+				reference: REPORT_REFERENCE_COMMUNITY,
 			},
 			locale,
 		),
@@ -325,6 +507,7 @@ const previews: Record<string, Preview> = {
 				reportId: REPORT_ID,
 				publicComment: 'We removed the reported message under our community guidelines.',
 				outcome: 'action_taken',
+				reference: REPORT_REFERENCE,
 			},
 			locale,
 		),
@@ -332,7 +515,7 @@ const previews: Record<string, Preview> = {
 		service.send(
 			'dsa_report_resolved',
 			USER,
-			{reportId: REPORT_ID, publicComment: '', outcome: 'no_violation'},
+			{reportId: REPORT_ID, publicComment: '', outcome: 'no_violation', reference: REPORT_REFERENCE},
 			locale,
 		),
 	gift_chargeback_notification: (locale) => service.send('gift_chargeback_notification', USER, {}, locale),
@@ -345,17 +528,18 @@ const previews: Record<string, Preview> = {
 				invoiceNumber: 'B1Q2W3E4-0001',
 				orderDate: DATE,
 				quantity: 1,
-				amountMinor: price.earlyBird * 1,
-				currency: price.currency,
-				waiverConsentAt: DATE,
-				countryConsent: false,
-				withdrawalDays: null,
+				totals: passTotals(locale, 1),
+				document: sampleDocument('OP-000123'),
+				business: false,
+				consentAt: DATE,
 				withdrawalEndsOn: null,
+				withdrawalCountry: null,
 				wallName: 'Maja Lind',
-				unitAmountMinor: 19900,
+				unitAmountMinor: price.earlyBird,
 				paymentMethod: 'Visa ···· 4242',
-				consentText:
-					"Deliver my pass now. I understand I lose my right to withdraw once it's delivered, and that the bonus isn't part of the price.",
+				deliveryBoxText:
+					"Deliver my certificate now. I understand that I lose my right to withdraw once it's delivered.",
+				termsVersion: '2026-11-01',
 			},
 			locale,
 		);
@@ -369,65 +553,18 @@ const previews: Record<string, Preview> = {
 				invoiceNumber: 'E1Q2W3E4-0002',
 				orderDate: DATE,
 				quantity: 3,
-				amountMinor: price.earlyBird * 3,
-				currency: price.currency,
-				waiverConsentAt: DATE,
-				countryConsent: false,
-				withdrawalDays: null,
-				withdrawalEndsOn: null,
-				wallName: 'Maja Lind',
-				unitAmountMinor: 19900,
-				paymentMethod: 'Visa ···· 4242',
-				consentText:
-					"Deliver all 3 passes now. I understand I lose my right to withdraw once they're delivered, and that the bonus isn't part of the price.",
-			},
-			locale,
-		);
-	},
-	purchase_confirmation_country: (locale) => {
-		const price = PRICES[locale] ?? USD;
-		return service.send(
-			'operator_pass_purchase_confirmation',
-			USER,
-			{
-				invoiceNumber: 'C1Q2W3E4-0003',
-				orderDate: DATE,
-				quantity: 1,
-				amountMinor: price.earlyBird * 1,
-				currency: price.currency,
-				waiverConsentAt: DATE,
-				countryConsent: true,
-				withdrawalDays: 7,
+				totals: passTotals(locale, 3),
+				document: sampleDocument('OP-000123'),
+				business: false,
+				consentAt: DATE,
 				withdrawalEndsOn: new Date(DATE.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-				wallName: 'Maja Lind',
-				unitAmountMinor: 19900,
-				paymentMethod: 'Visa ···· 4242',
-				consentText:
-					"Deliver my pass now. I can still cancel within 7 days for a full refund. The bonus isn't part of the price.",
-			},
-			locale,
-		);
-	},
-	purchase_confirmation_country_multiple: (locale) => {
-		const price = PRICES[locale] ?? USD;
-		return service.send(
-			'operator_pass_purchase_confirmation',
-			USER,
-			{
-				invoiceNumber: 'F1Q2W3E4-0004',
-				orderDate: DATE,
-				quantity: 2,
-				amountMinor: price.earlyBird * 2,
-				currency: price.currency,
-				waiverConsentAt: DATE,
-				countryConsent: true,
-				withdrawalDays: 7,
-				withdrawalEndsOn: new Date(DATE.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+				withdrawalCountry: 'BR',
 				wallName: null,
-				unitAmountMinor: 19900,
+				unitAmountMinor: price.earlyBird,
 				paymentMethod: 'Visa ···· 4242',
-				consentText:
-					"Deliver all 2 passes now. I can still cancel each one within 7 days for a full refund. The bonus isn't part of the price.",
+				deliveryBoxText:
+					'Deliver my certificates now. I can still withdraw within 7 days of delivery and get a full refund.',
+				termsVersion: '2026-11-01',
 			},
 			locale,
 		);
@@ -438,64 +575,47 @@ const previews: Record<string, Preview> = {
 			'operator_pass_withdrawal_receipt',
 			USER,
 			{
-				cancellation: false,
 				name: 'Alex Lindqvist',
 				receivedAt: DATE,
 				invoiceNumber: 'C1Q2W3E4-0003',
 				orderDate: DATE,
 				amountMinor: price.earlyBird,
 				currency: price.currency,
+				delivered: true,
+				passCount: 1,
 				lastPass: true,
-				hasDonation: true,
-				refundViaDispute: false,
+				visionary: false,
+				refund: 'started',
+				creditNote: sampleDocument('KR-000007'),
 			},
 			locale,
 		);
 	},
-	withdrawal_receipt_cancellation: (locale) => {
-		const price = PRICES[locale] ?? USD;
-		return service.send(
-			'operator_pass_withdrawal_receipt',
-			USER,
-			{
-				cancellation: true,
-				name: 'Alex Lindqvist',
-				receivedAt: DATE,
-				invoiceNumber: 'C1Q2W3E4-0003',
-				orderDate: DATE,
-				amountMinor: price.earlyBird,
-				currency: price.currency,
-				lastPass: true,
-				hasDonation: false,
-				refundViaDispute: false,
-			},
-			locale,
-		);
-	},
-	offer_received: (locale) =>
+	offer_received: (locale) => service.send('operator_pass_offer_received', USER, {senderName: 'Maja Lind'}, locale),
+	offer_accepted: (locale) =>
 		service.send(
-			'operator_pass_offer_received',
+			'operator_pass_offer_accepted',
 			USER,
-			{senderName: 'Maja Lind', arrivesAt: new Date(DATE.getTime() + 72 * 60 * 60 * 1000)},
+			{recipientName: 'Tomas Varga', remainingCount: 2, visionary: false},
 			locale,
 		),
-	offer_accepted: (locale) =>
-		service.send('operator_pass_offer_accepted', USER, {recipientName: 'Tomas Varga', remainingCount: 2}, locale),
 	offer_declined: (locale) =>
 		service.send('operator_pass_offer_ended', USER, {otherName: 'Tomas Varga', ended: 'declined'}, locale),
 	offer_taken_back: (locale) =>
 		service.send('operator_pass_offer_ended', USER, {otherName: 'Maja Lind', ended: 'withdrawn'}, locale),
 	offer_canceled: (locale) =>
 		service.send('operator_pass_offer_ended', USER, {otherName: 'Maja Lind', ended: 'cancelled'}, locale),
-	revoked: (locale) => service.send('operator_pass_revoked', USER, {cause: 'refund', lastPass: false}, locale),
+	revoked: (locale) =>
+		service.send('operator_pass_revoked', USER, {cause: 'refund', lastPass: false, visionary: false}, locale),
 	removal_notice: (locale) =>
 		service.send(
 			'operator_pass_removal_notice',
 			USER,
 			{
 				rule: 'Community guidelines section 2, threats',
-				facts: 'Sent threats to another operator in #operators on two days.',
+				facts: 'Sent threats to another Operator in #operators on two days.',
 				replyBy: DATE,
+				visionary: false,
 			},
 			locale,
 		),
@@ -512,10 +632,17 @@ const previews: Record<string, Preview> = {
 			USER,
 			{
 				target: 'name',
-				shown: 'username',
+				shown: 'operator',
 				reason: 'impersonation',
 				note: 'The name copies the name of another open source project.',
 			},
+			locale,
+		),
+	wall_quote_cleared: (locale) =>
+		service.send(
+			'operator_pass_wall_quote_cleared',
+			USER,
+			{reason: 'guidelines', note: 'The quote insults another Operator by name.'},
 			locale,
 		),
 	perks_removed: (locale) =>
@@ -527,6 +654,328 @@ const previews: Record<string, Preview> = {
 				rule: 'Community guidelines section 4, advertising',
 				facts: 'Posted ads for a hosting company in #operators three times.',
 				automated: false,
+				visionary: false,
+				dispute: null,
+			},
+			locale,
+		),
+	plutonium_payment_receipt: (locale) =>
+		service.send(
+			'plutonium_payment_receipt',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				plan: 'monthly',
+				invoiceNumber: 'B1Q2W3E4-0007',
+				paidAt: DATE,
+				period: {start: DATE, end: new Date('2026-11-09T14:30:00Z')},
+				totals: plutoniumTotals(locale),
+				document: sampleDocument('OP-000123'),
+				business: false,
+				purchase: null,
+			},
+			locale,
+		),
+	plutonium_first_receipt: (locale) => {
+		const totals = plutoniumTotals(locale);
+		return service.send(
+			'plutonium_payment_receipt',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				plan: 'monthly',
+				invoiceNumber: 'B1Q2W3E4-0001',
+				paidAt: DATE,
+				period: {start: DATE, end: new Date('2026-11-09T14:30:00Z')},
+				totals,
+				document: sampleDocument('OP-000123'),
+				business: false,
+				purchase: {
+					renewal: {interval: 'month', amountMinor: totals.totalMinor, tax: totals.tax ? 'included' : 'none'},
+					consentAt: DATE,
+					withdrawalEndsOn: '2026-10-23',
+					withdrawalRule: PREVIEW_WITHDRAWAL_RULES[locale] ?? 'eu',
+					withdrawalProRata: PREVIEW_WITHDRAWAL_RULES[locale] !== 'brazil',
+					seller: true,
+				},
+			},
+			locale,
+		);
+	},
+	plutonium_gift_receipt: (locale) =>
+		service.send(
+			'plutonium_payment_receipt',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				plan: 'gift_1_year',
+				invoiceNumber: 'B1Q2W3E4-0008',
+				paidAt: DATE,
+				period: null,
+				totals: plutoniumTotals(locale, 10),
+				document: sampleDocument('OP-000123'),
+				business: false,
+				purchase: null,
+			},
+			locale,
+		),
+	plutonium_refund_receipt: (locale) => {
+		const price = PLUTONIUM_PRICES[locale] ?? PLUTONIUM_USD;
+		return service.send(
+			'plutonium_refund_receipt',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				plan: 'monthly',
+				invoiceNumber: 'B1Q2W3E4-0007',
+				refundedAt: DATE,
+				amountMinor: price.monthly,
+				paidMinor: price.monthly,
+				paidAt: new Date('2026-10-08T14:30:00Z'),
+				currency: price.currency,
+				creditNote: sampleDocument('KR-000007'),
+			},
+			locale,
+		);
+	},
+	plutonium_withdrawal_receipt: (locale) => {
+		const price = PLUTONIUM_PRICES[locale] ?? PLUTONIUM_USD;
+		return service.send(
+			'plutonium_withdrawal_receipt',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				name: 'Alex Lindqvist',
+				receivedAt: DATE,
+				purchasedAt: new Date('2026-10-08T14:30:00Z'),
+				gift: false,
+				amountMinor: price.monthly,
+				currency: price.currency,
+				refund: 'started',
+				brazil: locale === 'pt-BR',
+				proRata: locale !== 'pt-BR',
+				reference: 'sub_1Q2W3E4R5T6Y',
+			},
+			locale,
+		);
+	},
+	plutonium_payment_failed: (locale) => {
+		const price = PLUTONIUM_PRICES[locale] ?? PLUTONIUM_USD;
+		return service.send(
+			'plutonium_payment_failed',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				reason: 'declined',
+				attemptedAt: DATE,
+				amountMinor: price.monthly,
+				currency: price.currency,
+				accessEndsAt: new Date('2026-10-23T14:30:00Z'),
+			},
+			locale,
+		);
+	},
+	plutonium_payment_action_required: (locale) => {
+		const price = PLUTONIUM_PRICES[locale] ?? PLUTONIUM_USD;
+		return service.send(
+			'plutonium_payment_failed',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				reason: 'action_required',
+				attemptedAt: DATE,
+				amountMinor: price.monthly,
+				currency: price.currency,
+				accessEndsAt: new Date('2026-10-23T14:30:00Z'),
+			},
+			locale,
+		);
+	},
+	plutonium_renewal_notice: (locale) => renewalNotice(locale),
+	plutonium_renewal_notice_annual: (locale) =>
+		renewalNotice(locale, {
+			variant: 'annual',
+			plan: 'monthly',
+			yearStartsAt: new Date(CHARGE_AT.getTime() + 31 * 24 * 60 * 60 * 1000),
+			next: plutoniumTotals(locale),
+			regular: plutoniumTotals(locale),
+		}),
+	plutonium_renewal_notice_gift: (locale) =>
+		renewalNotice(locale, {
+			variant: 'gift',
+			plan: 'monthly',
+			giftEndsAt: CHARGE_AT,
+			next: plutoniumTotals(locale),
+			regular: plutoniumTotals(locale),
+		}),
+	plutonium_renewal_notice_yearly_gift: (locale) => renewalNotice(locale, {giftEndsAt: CHARGE_AT}),
+	plutonium_renewal_notice_named_method: (locale) => renewalNotice(locale, {paymentMethod: PIX}),
+	plutonium_renewal_notice_no_method: (locale) => renewalNotice(locale, {paymentMethod: NO_METHOD}),
+	plutonium_renewal_notice_price_differs: (locale) => renewalNotice(locale, {next: plutoniumTotals(locale, 5)}),
+	plutonium_renewal_notice_no_preview: (locale) =>
+		renewalNotice(locale, {next: null, regular: {...yearlyTotals(locale), tax: null}, taxIncluded: false}),
+	donation_renewal_notice: (locale) =>
+		service.send(
+			'donation_renewal_notice',
+			USER,
+			{
+				chargeAt: CHARGE_AT,
+				next: null,
+				regular: {totalMinor: 5000, paidMinor: 5000, currency: 'USD', tax: null, reverseCharge: false},
+				taxIncluded: true,
+				paymentMethod: CARD,
+				seller: true,
+				manageUrl: DONATION_MANAGE_URL,
+			},
+			locale,
+		),
+	plutonium_card_expiring: (locale) =>
+		service.send(
+			'plutonium_card_expiring',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				brand: 'mastercard',
+				last4: '4444',
+				expMonth: 10,
+				expYear: 2026,
+				chargeAt: CHARGE_AT,
+				amount: plutoniumTotals(locale),
+				taxIncluded: true,
+				seller: true,
+				timeZone: TIME_ZONE,
+			},
+			locale,
+		),
+	donation_card_expiring: (locale) =>
+		service.send(
+			'donation_card_expiring',
+			USER,
+			{
+				brand: 'visa',
+				last4: '4242',
+				expMonth: 10,
+				expYear: 2026,
+				chargeAt: CHARGE_AT,
+				amount: {totalMinor: 1000, paidMinor: 1000, currency: 'USD', tax: null, reverseCharge: false},
+				taxIncluded: true,
+				seller: true,
+				manageUrl: DONATION_MANAGE_URL,
+			},
+			locale,
+		),
+	plutonium_cancellation_confirmation: (locale) => cancellation(locale),
+	plutonium_cancellation_confirmation_unpaid: (locale) => cancellation(locale, {unpaid: plutoniumTotals(locale)}),
+	donation_cancellation_confirmation: (locale) =>
+		service.send(
+			'donation_cancellation_confirmation',
+			USER,
+			{
+				receivedAt: DATE,
+				endsAt: CHARGE_AT,
+				reference: SUBSCRIPTION_ID,
+				seller: true,
+				manageUrl: DONATION_MANAGE_URL,
+			},
+			locale,
+		),
+	plutonium_ended_unpaid_void: (locale) => endedUnpaid(locale, 'void'),
+	plutonium_ended_unpaid_open: (locale) => endedUnpaid(locale, 'open'),
+	plutonium_ended_unpaid_uncollectible: (locale) => endedUnpaid(locale, 'uncollectible'),
+	plutonium_gift_applied: (locale) =>
+		service.send(
+			'plutonium_gift_applied',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				plan: 'monthly',
+				trialEnd: CHARGE_AT,
+				amount: plutoniumTotals(locale),
+				taxIncluded: true,
+				paymentMethod: CARD,
+				seller: true,
+				timeZone: TIME_ZONE,
+			},
+			locale,
+		),
+
+	plutonium_refund_receipt_subscription_ended: (locale) => {
+		const price = PLUTONIUM_PRICES[locale] ?? PLUTONIUM_USD;
+		return service.send(
+			'plutonium_refund_receipt',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				plan: 'monthly',
+				invoiceNumber: 'B1Q2W3E4-0007',
+				refundedAt: DATE,
+				amountMinor: price.monthly,
+				paidMinor: price.monthly,
+				paidAt: new Date('2026-10-08T14:30:00Z'),
+				currency: price.currency,
+				creditNote: sampleDocument('KR-000007'),
+				subscriptionEnded: {requestedAt: DATE, reference: SUBSCRIPTION_ID},
+				timeZone: TIME_ZONE,
+			},
+			locale,
+		);
+	},
+	plutonium_payment_action_required_reminder: (locale) => {
+		const price = PLUTONIUM_PRICES[locale] ?? PLUTONIUM_USD;
+		return service.send(
+			'plutonium_payment_failed',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				reason: 'action_required',
+				attemptedAt: DATE,
+				amountMinor: price.monthly,
+				currency: price.currency,
+				accessEndsAt: new Date('2026-10-23T14:30:00Z'),
+				reminder: true,
+			},
+			locale,
+		);
+	},
+	plutonium_payment_action_required_plan_change: (locale) => {
+		const price = PLUTONIUM_PRICES[locale] ?? PLUTONIUM_USD;
+		return service.send(
+			'plutonium_payment_failed',
+			USER,
+			{
+				premiumName: 'Plutonium',
+				reason: 'action_required',
+				attemptedAt: DATE,
+				amountMinor: price.monthly,
+				currency: price.currency,
+				accessEndsAt: new Date('2026-10-23T14:30:00Z'),
+				planChange: true,
+			},
+			locale,
+		);
+	},
+	gift_chargeback_notification_billing_resumed: (locale) =>
+		service.send(
+			'gift_chargeback_notification',
+			USER,
+			{billingResumed: {premiumName: 'Plutonium', plan: 'monthly'}},
+			locale,
+		),
+	operator_pass_refund_receipt: (locale) =>
+		service.send(
+			'operator_pass_refund_receipt',
+			USER,
+			{
+				invoiceNumber: 'B1Q2W3E4-0002',
+				orderDate: DATE,
+				refundedAt: new Date('2026-10-12T09:00:00Z'),
+				amountMinor: 19900,
+				currency: 'USD',
+				delivered: true,
+				passCount: 1,
+				lastPass: true,
+				visionary: false,
+				creditNote: sampleDocument('KR-000008'),
 			},
 			locale,
 		),

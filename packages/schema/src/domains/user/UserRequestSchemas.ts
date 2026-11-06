@@ -18,10 +18,12 @@ import {
 } from '@fluxer/constants/src/UserConstants';
 import {ValidationErrorCodes} from '@fluxer/constants/src/ValidationErrorCodes';
 import {SudoVerificationSchema} from '@fluxer/schema/src/domains/auth/AuthSchemas';
+import {HiddenProfileBadgesType} from '@fluxer/schema/src/domains/user/ProfileBadgeSchemas';
 import {
 	isValidSyncedPreferencesEncoding,
 	SYNCED_PREFERENCES_MAX_ENCODED_LENGTH,
 } from '@fluxer/schema/src/domains/user/SyncedPreferencesCodec';
+import {withBase64Binary} from '@fluxer/schema/src/primitives/Base64BinaryFields';
 import {isValidSingleUnicodeEmoji} from '@fluxer/schema/src/primitives/EmojiValidators';
 import {createBase64ImageType} from '@fluxer/schema/src/primitives/FileValidators';
 import {LocaleSchema} from '@fluxer/schema/src/primitives/LocaleSchema';
@@ -79,13 +81,20 @@ export const UserUpdateRequest = z
 			'Bitfield controlling who can see the profile timezone',
 			'ProfileFieldPrivacyFlags',
 		).describe('Bitfield controlling who can see the profile timezone'),
-		premium_badge_hidden: z.boolean().describe('Whether to hide the premium badge'),
+		hidden_profile_badges: HiddenProfileBadgesType,
+		premium_badge_hidden: z
+			.boolean()
+			.describe(
+				'Deprecated, use hidden_profile_badges. true adds plutonium, visionary and premium to the list, and false removes them',
+			),
 		premium_badge_masked: z.boolean().describe('Whether to mask the premium badge'),
 		premium_badge_timestamp_hidden: z.boolean().describe('Whether to hide premium badge timestamp'),
-		premium_badge_sequence_hidden: z.boolean().describe('Whether to hide premium badge sequence'),
+		premium_badge_sequence_hidden: z
+			.boolean()
+			.describe('Deprecated, use hidden_profile_badges. true adds visionary_number to the list, and false removes it'),
 		operator_pass_badge_hidden: z
 			.boolean()
-			.describe('Whether to hide the Operator Pass badge from other people. Either value replaces the default'),
+			.describe('Deprecated, use hidden_profile_badges. true adds operator_pass to the list, and false removes it'),
 		operator_pass_badge_timestamp_hidden: z
 			.boolean()
 			.describe('Whether to hide from other people the month and year the Operator Pass was first held'),
@@ -283,6 +292,7 @@ export type CreatePrivateChannelRequest = z.infer<typeof CreatePrivateChannelReq
 
 const UserSettingsGuildIds = z
 	.array(SnowflakeType)
+	.max(10000)
 	.transform((ids) => [...new Set(ids)])
 	.refine((ids) => ids.length <= MAX_GUILDS_PREMIUM, `Maximum ${MAX_GUILDS_PREMIUM} guilds allowed`);
 
@@ -388,14 +398,24 @@ export const UserSettingsUpdateRequest = z
 			SensitiveMediaGuildFilterLevelSchema,
 			'Sensitive media filter level for community channels',
 		),
+		allow_mature_content_on_ios: z
+			.boolean()
+			.describe(
+				'Whether 18+ communities, channels and the "Show" sensitive media option are allowed in the iOS app. Only adults can turn this on. The iOS app never offers this setting.',
+			),
 		suppress_unprivileged_self_mentions: z
 			.boolean()
 			.describe('Suppress direct mentions and reply mentions from unprivileged users'),
 		suppress_unprivileged_self_mentions_bypass_user_ids: z
 			.array(SnowflakeType)
+			.max(1000)
 			.nullish()
 			.describe('User IDs that bypass self-mention suppression'),
-		staff_dm_access_user_ids: z.array(SnowflakeType).nullish().describe('User IDs with Staff DM Access enabled'),
+		staff_dm_access_user_ids: z
+			.array(SnowflakeType)
+			.max(1000)
+			.nullish()
+			.describe('User IDs with Staff DM Access enabled'),
 		profile_privacy: withFieldDescription(
 			ProfilePrivacyLevelSchema,
 			'Controls who sees the full profile: all guild members, only small-guild members, or only friends',
@@ -411,12 +431,14 @@ export const UserSettingsUpdateRequest = z
 			.describe(
 				'Version of the privacy setup the user just reviewed. The server also records privacy_setup_completed_at as the current time.',
 			),
-		synced_preferences: z
-			.string()
-			.max(SYNCED_PREFERENCES_MAX_ENCODED_LENGTH)
-			.refine((value) => isValidSyncedPreferencesEncoding(value), {
-				message: ValidationErrorCodes.INVALID_FORMAT,
-			})
+		synced_preferences: withBase64Binary(
+			z
+				.string()
+				.max(SYNCED_PREFERENCES_MAX_ENCODED_LENGTH)
+				.refine((value) => isValidSyncedPreferencesEncoding(value), {
+					message: ValidationErrorCodes.INVALID_FORMAT,
+				}),
+		)
 			.nullish()
 			.describe(
 				'Account-wide client preferences as a base64-encoded protobuf snapshot. Replaces the entire stored snapshot; pass null to clear it.',
@@ -798,6 +820,13 @@ export const BulkDeleteSelfMessagesFilter = z
 	});
 
 export type BulkDeleteSelfMessagesFilter = z.infer<typeof BulkDeleteSelfMessagesFilter>;
+
+export const UserAccountDeleteRequest = SudoVerificationSchema.extend({
+	immediate: z.boolean().optional().describe('Delete the account now instead of after the grace period'),
+	delete_messages: z.boolean().optional().describe('Also delete every message the account sent'),
+});
+
+export type UserAccountDeleteRequest = z.infer<typeof UserAccountDeleteRequest>;
 
 export const BulkDeleteSelfMessagesRequest = BulkDeleteSelfMessagesFilter.safeExtend(SudoVerificationSchema.shape);
 

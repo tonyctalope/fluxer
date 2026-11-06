@@ -21,6 +21,21 @@ var Volumes = []string{
 
 var BackupVolumes = []string{"seaweedfs-data", "valkey-data", "nats-data", "meilisearch-data"}
 
+var UploadsServices = []string{"seaweedfs", "seaweedfs-init"}
+
+type DataMount struct {
+	Service string
+	Target  string
+}
+
+var DataMounts = map[string]DataMount{
+	"postgres-data":    {Service: "postgres", Target: "/var/lib/postgresql/data"},
+	"valkey-data":      {Service: "valkey", Target: "/data"},
+	"nats-data":        {Service: "nats", Target: "/data"},
+	"meilisearch-data": {Service: "meilisearch", Target: "/meili_data"},
+	"seaweedfs-data":   {Service: "seaweedfs", Target: "/data"},
+}
+
 var PublishedPorts = []Port{
 	{Number: 80, Proto: "tcp"},
 	{Number: 443, Proto: "tcp"},
@@ -37,10 +52,12 @@ type Port struct {
 const (
 	VoiceTCPPortKey = "FLUXER_LIVEKIT_TCP_PORT"
 	VoiceUDPPortKey = "FLUXER_LIVEKIT_UDP_PORT"
+	VoiceBundledKey = "FLUXER_LIVEKIT_BUNDLED"
 )
 
 func Ports(env map[string]string) []Port {
 	out := make([]Port, 0, len(PublishedPorts))
+	bundled := VoiceBundled(env[VoiceBundledKey])
 	for _, p := range PublishedPorts {
 		key := ""
 		switch {
@@ -48,6 +65,9 @@ func Ports(env map[string]string) []Port {
 			key = VoiceTCPPortKey
 		case p.Number == 7882 && p.Proto == "udp":
 			key = VoiceUDPPortKey
+		}
+		if key != "" && !bundled {
+			continue
 		}
 		if n, err := strconv.Atoi(strings.TrimSpace(env[key])); key != "" && err == nil && n > 0 && n <= 65535 {
 			p.Number = n

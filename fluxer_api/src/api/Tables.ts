@@ -39,12 +39,14 @@ import {
 	type AttachmentUploadTraceByKeyRow,
 } from '@app/api/database/types/AttachmentUploadTypes';
 import {
+	AUTH_SESSION_BY_APP_CHANNEL_COLUMNS,
 	AUTH_SESSION_COLUMNS,
 	AUTH_SESSION_TOMBSTONE_COLUMNS,
 	AUTHORIZED_IP_COLUMNS,
 	AUTHORIZED_IP_TRUST_KEY_COLUMNS,
 	type AuthorizedIpRow,
 	type AuthorizedIpTrustKeyRow,
+	type AuthSessionByAppChannelRow,
 	type AuthSessionRow,
 	type AuthSessionTombstoneRow,
 	EMAIL_CHANGE_TICKET_COLUMNS,
@@ -131,6 +133,7 @@ import {
 	type WebhooksBySourceChannelRow,
 } from '@app/api/database/types/ChannelTypes';
 import {USER_CONNECTION_STORAGE_COLUMNS, type UserConnectionStorageRow} from '@app/api/database/types/ConnectionTypes';
+import {CUSTOM_BADGE_COLUMNS, type CustomBadgeRow} from '@app/api/database/types/CustomBadgeTypes';
 import {
 	ENFORCEMENT_DECISION_BY_SUBJECT_COLUMNS,
 	ENFORCEMENT_DECISION_COLUMNS,
@@ -1080,6 +1083,16 @@ export const AuthSessionsByUserId = defineTable<
 	columns: ['user_id', 'session_id_hash'],
 	primaryKey: ['user_id', 'session_id_hash'],
 });
+export const AuthSessionsByAppChannel = defineTable<
+	AuthSessionByAppChannelRow,
+	'app_platform' | 'app_release_channel' | 'session_id_hash',
+	'app_platform' | 'app_release_channel'
+>({
+	name: 'auth_sessions_by_app_channel',
+	columns: AUTH_SESSION_BY_APP_CHANNEL_COLUMNS,
+	primaryKey: ['app_platform', 'app_release_channel', 'session_id_hash'],
+	partitionKey: ['app_platform', 'app_release_channel'],
+});
 export const AuthSessionTombstones = defineTable<AuthSessionTombstoneRow, 'user_id' | 'session_id_hash'>({
 	name: 'auth_session_tombstones',
 	columns: AUTH_SESSION_TOMBSTONE_COLUMNS,
@@ -1111,6 +1124,34 @@ export const WebAuthnCredentialLookup = defineTable<
 	name: 'webauthn_credential_lookup',
 	columns: ['credential_id', 'user_id'],
 	primaryKey: ['credential_id'],
+});
+export const AppAttestKeys = defineTable<
+	{
+		user_id: UserID;
+		key_id: string;
+		public_key: Buffer;
+		environment: string;
+		app_id: string;
+		counter: bigint;
+		created_at: Date;
+		last_used_at: Date | null;
+	},
+	'user_id' | 'key_id'
+>({
+	name: 'app_attest_keys',
+	columns: ['user_id', 'key_id', 'public_key', 'environment', 'app_id', 'counter', 'created_at', 'last_used_at'],
+	primaryKey: ['user_id', 'key_id'],
+});
+export const AppAttestKeyLookup = defineTable<
+	{
+		key_id: string;
+		user_id: UserID;
+	},
+	'key_id'
+>({
+	name: 'app_attest_key_lookup',
+	columns: ['key_id', 'user_id'],
+	primaryKey: ['key_id'],
 });
 export const IpAuthorizationTokens = defineTable<IpAuthorizationTokenRow, 'token_' | 'user_id'>({
 	name: 'ip_authorization_tokens',
@@ -1332,6 +1373,17 @@ export const InstanceConfiguration = defineTable<InstanceConfigurationRow, 'key'
 	name: 'instance_configuration',
 	columns: INSTANCE_CONFIGURATION_COLUMNS,
 	primaryKey: ['key'],
+});
+export const CustomBadges = defineTable<CustomBadgeRow, 'badge_id'>({
+	name: 'custom_badges',
+	columns: CUSTOM_BADGE_COLUMNS,
+	primaryKey: ['badge_id'],
+});
+export const CustomBadgesByPosition = defineTable<CustomBadgeRow, 'type' | 'position', 'type'>({
+	name: 'custom_badges_by_position',
+	columns: CUSTOM_BADGE_COLUMNS,
+	primaryKey: ['type', 'position'],
+	partitionKey: ['type'],
 });
 export const JobsById = defineTable<JobByIdRow, 'job_id'>({
 	name: 'jobs_by_id',
